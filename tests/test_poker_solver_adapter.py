@@ -28,7 +28,7 @@ class FakeTinySolver:
             return {"state": "root"}
 
         def current_player(self, state):
-            return 1
+            return 0
 
         def infoset_key(self, state, player):
             return "root"
@@ -327,15 +327,54 @@ def test_tiny_postflop_exposes_root_strategy_raw(monkeypatch: pytest.MonkeyPatch
     raw = output["root_strategy_raw"]
     assert raw["infoset_key"] == "root"
     assert raw["source"] == "average_strategy"
-    assert raw["player"] == 1
-    assert raw["root_player"] == 1
-    assert raw["root_player_role"] == "unknown"
+    assert raw["player"] == 0
+    assert raw["root_player"] == 0
+    assert raw["hero_solver_player"] == 0
+    assert raw["root_matches_hero"] is True
+    assert raw["root_player_role"] == "hero"
+    assert raw["decision_actor"] == "hero"
+    assert raw["root_must_be_hero"] is True
     assert raw["action_ids"] == [1, 3, 13]
     assert raw["action_labels"] == ["CHECK", "BET_66", "ALL_IN"]
     assert raw["frequencies"] == [0.2, 0.7, 0.1]
     assert raw["bet_size_fractions"] == [0.66]
     assert output["root_strategy_error"] is None
+    assert output["root_player"] == 0
+    assert output["hero_solver_player"] == 0
+    assert output["root_matches_hero"] is True
+    assert output["root_player_role"] == "hero"
     assert_not_label_payload(output)
+
+
+def test_tiny_postflop_marks_non_hero_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    class VillainRootSolver(FakeTinySolver):
+        class HUNLPoker(FakeTinySolver.HUNLPoker):
+            def current_player(self, state):
+                return 1
+
+    monkeypatch.setattr(adapter, "_load_poker_solver", lambda solver_path=None: (VillainRootSolver, None, None))
+
+    result = adapter.solve_tiny_postflop_spot(
+        ["Ah", "Kh"],
+        ["Qd", "Qc"],
+        board=["As", "7c", "2d", "Kh", "5s"],
+        pot=10,
+        stack=100,
+        bet_sizes=(0.66,),
+        iterations=25,
+        backend="python",
+        timeout_s=None,
+    )
+
+    assert_stable_result(result)
+    raw = result["output"]["root_strategy_raw"]
+    assert raw["root_player"] == 1
+    assert raw["hero_solver_player"] == 0
+    assert raw["root_matches_hero"] is False
+    assert raw["root_player_role"] == "villain"
+    assert result["output"]["root_matches_hero"] is False
+    assert result["output"]["root_player_role"] == "villain"
+    assert_not_label_payload(result["output"])
 
 
 def test_tiny_postflop_root_strategy_missing_is_controlled(monkeypatch: pytest.MonkeyPatch) -> None:

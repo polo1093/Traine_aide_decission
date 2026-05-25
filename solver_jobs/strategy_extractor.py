@@ -20,6 +20,9 @@ def extract_root_strategy(run_result: Mapping[str, Any]) -> dict[str, Any]:
         root_strategy = _find_root_strategy(run_result)
         if root_strategy is None:
             return _failed(solver_job_id, "strategy_not_available")
+        alignment_error = _alignment_error(root_strategy)
+        if alignment_error is not None:
+            return _failed(solver_job_id, alignment_error)
 
         frequencies, evs, error = _parse_root_strategy(root_strategy)
         if error is not None:
@@ -69,28 +72,10 @@ def _find_strategy_in_mapping(payload: Mapping[str, Any]) -> Any:
         if found is not None:
             return found
 
-    for key in ("root_strategy_raw", "root_strategy", "action_frequencies", "root_action_frequencies"):
+    for key in ("root_strategy_raw",):
         value = payload.get(key)
         if value is not None:
             return value
-
-    strategy = payload.get("strategy")
-    if isinstance(strategy, Mapping):
-        for key in ("root", "root_strategy", "action_frequencies"):
-            value = strategy.get(key)
-            if value is not None:
-                return value
-
-    average_strategy = payload.get("average_strategy")
-    if isinstance(average_strategy, Mapping):
-        for key in ("root", "initial", ""):
-            value = average_strategy.get(key)
-            if value is not None:
-                return value
-        if len(average_strategy) == 1:
-            value = next(iter(average_strategy.values()))
-            if _looks_like_action_frequency_mapping(value):
-                return value
 
     return None
 
@@ -99,19 +84,22 @@ def _parse_root_strategy(value: Any) -> tuple[dict[str, float], dict[str, float]
     if isinstance(value, Mapping):
         if "action_labels" in value and "frequencies" in value:
             return _parse_raw_strategy(value)
-        if "action_frequencies" in value:
-            frequencies, error = _parse_frequency_mapping(value.get("action_frequencies"))
-            evs = _parse_evs(value.get("action_evs") or value.get("evs") or value.get("action_ev"))
-            return frequencies, evs, error
-        if "actions" in value:
-            return _parse_action_rows(value.get("actions"))
-        frequencies, error = _parse_frequency_mapping(value)
-        return frequencies, {}, error
-
-    if isinstance(value, list):
-        return _parse_action_rows(value)
 
     return {}, {}, "strategy_not_available"
+
+
+def _alignment_error(root_strategy: Any) -> str | None:
+    if not isinstance(root_strategy, Mapping):
+        return "strategy_not_available"
+    if root_strategy.get("hero_solver_player") is None:
+        return "hero_solver_player_unknown"
+    if root_strategy.get("root_player_role") == "unknown":
+        return "hero_solver_player_unknown"
+    if root_strategy.get("root_matches_hero") is not True:
+        return "root_player_not_hero"
+    if root_strategy.get("root_player_role") != "hero":
+        return "root_player_not_hero"
+    return None
 
 
 def _parse_raw_strategy(value: Mapping[str, Any]) -> tuple[dict[str, float], dict[str, float], str | None]:
@@ -132,74 +120,6 @@ def _parse_raw_strategy(value: Mapping[str, Any]) -> tuple[dict[str, float], dic
             return {}, {}, "invalid_frequency_value"
         mapped[_normalize_action(label)] = frequency
     return mapped, {}, None
-
-
-def _parse_frequency_mapping(value: Any) -> tuple[dict[str, float], str | None]:
-    if not isinstance(value, Mapping):
-        return {}, "strategy_not_available"
-
-    frequencies: dict[str, float] = {}
-    for raw_action, raw_frequency in value.items():
-        if raw_action in {"evs", "action_evs", "metadata"}:
-            continue
-        try:
-            frequency = float(raw_frequency)
-        except (TypeError, ValueError):
-            return {}, "invalid_frequency_value"
-        if frequency < 0.0 or frequency > 1.0:
-            return {}, "invalid_frequency_value"
-        frequencies[_normalize_action(raw_action)] = frequency
-    return frequencies, None
-
-
-def _parse_action_rows(value: Any) -> tuple[dict[str, float], dict[str, float], str | None]:
-    if not isinstance(value, list):
-        return {}, {}, "strategy_not_available"
-
-    frequencies: dict[str, float] = {}
-    evs: dict[str, float] = {}
-    for item in value:
-        if not isinstance(item, Mapping):
-            return {}, {}, "invalid_action_row"
-        action = item.get("action") or item.get("name")
-        if action is None:
-            return {}, {}, "invalid_action_row"
-        raw_frequency = item.get("frequency", item.get("probability", item.get("prob")))
-        try:
-            frequency = float(raw_frequency)
-        except (TypeError, ValueError):
-            return {}, {}, "invalid_frequency_value"
-        if frequency < 0.0 or frequency > 1.0:
-            return {}, {}, "invalid_frequency_value"
-        normalized_action = _normalize_action(action)
-        frequencies[normalized_action] = frequency
-        raw_ev = item.get("ev")
-        if raw_ev is not None:
-            try:
-                evs[normalized_action] = float(raw_ev)
-            except (TypeError, ValueError):
-                return {}, {}, "invalid_ev_value"
-    return frequencies, evs, None
-
-
-def _parse_evs(value: Any) -> dict[str, float]:
-    if not isinstance(value, Mapping):
-        return {}
-    evs: dict[str, float] = {}
-    for raw_action, raw_ev in value.items():
-        try:
-            evs[_normalize_action(raw_action)] = float(raw_ev)
-        except (TypeError, ValueError):
-            return {}
-    return evs
-
-
-def _looks_like_action_frequency_mapping(value: Any) -> bool:
-    if not isinstance(value, Mapping):
-        return False
-    if not value:
-        return False
-    return all(not isinstance(item, (list, tuple, Mapping)) for item in value.values())
 
 
 def _confidence(dominant_frequency: float) -> str:

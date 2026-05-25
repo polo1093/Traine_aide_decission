@@ -241,6 +241,9 @@ def solve_tiny_postflop_spot(
     backend: str = "rust",
     timeout_s: float | None = DEFAULT_TINY_TIMEOUT_S,
     solver_path: str | Path | None = None,
+    hero_solver_player: int | None = 0,
+    decision_actor: str = "hero",
+    root_must_be_hero: bool = True,
 ) -> dict[str, Any]:
     """Run a bounded concrete postflop smoke solve through PokerSolver.
 
@@ -262,6 +265,9 @@ def solve_tiny_postflop_spot(
         "backend": backend,
         "timeout_s": timeout_s,
         "solver_path": _input_path_value(solver_path),
+        "hero_solver_player": hero_solver_player,
+        "decision_actor": decision_actor,
+        "root_must_be_hero": root_must_be_hero,
     }
 
     try:
@@ -278,6 +284,9 @@ def solve_tiny_postflop_spot(
                 iterations=iterations,
                 backend=backend,
                 solver_path=solver_path,
+                hero_solver_player=hero_solver_player,
+                decision_actor=decision_actor,
+                root_must_be_hero=root_must_be_hero,
             )
             return _result(started, input_payload, output, None)
 
@@ -294,6 +303,9 @@ def solve_tiny_postflop_spot(
             iterations=iterations,
             backend=backend,
             solver_path=solver_path,
+            hero_solver_player=hero_solver_player,
+            decision_actor=decision_actor,
+            root_must_be_hero=root_must_be_hero,
         )
         try:
             output = future.result(timeout=timeout_value)
@@ -319,6 +331,9 @@ def _solve_tiny_postflop_spot_output(
     iterations: int,
     backend: str,
     solver_path: str | Path | None,
+    hero_solver_player: int | None,
+    decision_actor: str,
+    root_must_be_hero: bool,
 ) -> dict[str, Any]:
     if villain_hand is None:
         if villain_range is not None:
@@ -329,6 +344,8 @@ def _solve_tiny_postflop_spot_output(
 
     iterations_int = _validate_tiny_iterations(iterations)
     bet_size_fractions = _validate_bet_sizes(bet_sizes)
+    normalized_hero_solver_player = _validate_optional_solver_player(hero_solver_player)
+    normalized_decision_actor = _validate_decision_actor(decision_actor)
     if backend == "rust":
         rust_available, rust_error = _rust_backend_status()
         if not rust_available:
@@ -370,6 +387,9 @@ def _solve_tiny_postflop_spot_output(
         game=game,
         solved=solved,
         bet_size_fractions=bet_size_fractions,
+        hero_solver_player=normalized_hero_solver_player,
+        decision_actor=normalized_decision_actor,
+        root_must_be_hero=bool(root_must_be_hero),
     )
     return {
         "backend": getattr(solved, "backend", backend),
@@ -379,6 +399,11 @@ def _solve_tiny_postflop_spot_output(
         "strategy_entry_count": len(getattr(solved, "average_strategy", {}) or {}),
         "root_strategy_raw": root_strategy_raw,
         "root_strategy_error": root_strategy_error,
+        "root_player": _root_strategy_field(root_strategy_raw, "root_player"),
+        "hero_solver_player": normalized_hero_solver_player,
+        "root_matches_hero": _root_strategy_field(root_strategy_raw, "root_matches_hero"),
+        "root_player_role": _root_strategy_field(root_strategy_raw, "root_player_role") or "unknown",
+        "root_must_be_hero": bool(root_must_be_hero),
     }
 
 
@@ -534,6 +559,9 @@ def _extract_root_strategy_raw(
     game: Any,
     solved: Any,
     bet_size_fractions: tuple[float, ...],
+    hero_solver_player: int | None,
+    decision_actor: str,
+    root_must_be_hero: bool,
 ) -> tuple[dict[str, Any] | None, str | None]:
     try:
         average_strategy = getattr(solved, "average_strategy", None)
@@ -558,12 +586,18 @@ def _extract_root_strategy_raw(
         if total < 0.98 or total > 1.02:
             return None, "root_strategy_not_available:invalid_frequency_sum"
 
+        root_matches_hero = None if hero_solver_player is None else int(player) == hero_solver_player
+        root_player_role = _root_player_role(int(player), hero_solver_player)
         return (
             {
                 "infoset_key": str(root_key),
                 "player": int(player),
                 "root_player": int(player),
-                "root_player_role": "unknown",
+                "hero_solver_player": hero_solver_player,
+                "root_matches_hero": root_matches_hero,
+                "root_player_role": root_player_role,
+                "decision_actor": decision_actor,
+                "root_must_be_hero": bool(root_must_be_hero),
                 "action_ids": [int(action) for action in actions],
                 "action_labels": [_action_label(action, bet_size_fractions) for action in actions],
                 "frequencies": [round(float(value), 12) for value in frequencies],
@@ -589,6 +623,36 @@ def _numeric_frequencies(values: Any) -> list[float] | None:
             return None
         frequencies.append(frequency)
     return frequencies
+
+
+def _root_strategy_field(root_strategy_raw: dict[str, Any] | None, field_name: str) -> Any:
+    if not isinstance(root_strategy_raw, dict):
+        return None
+    return root_strategy_raw.get(field_name)
+
+
+def _validate_optional_solver_player(value: Any) -> int | None:
+    if value is None:
+        return None
+    number = int(value)
+    if number not in (0, 1):
+        raise ValueError(f"hero_solver_player_must_be_0_or_1_or_null:{value}")
+    return number
+
+
+def _validate_decision_actor(value: Any) -> str:
+    text = str(value)
+    if text not in {"hero", "villain", "unknown"}:
+        raise ValueError(f"unsupported_decision_actor:{text}")
+    return text
+
+
+def _root_player_role(root_player: int, hero_solver_player: int | None) -> str:
+    if hero_solver_player is None:
+        return "unknown"
+    if root_player == hero_solver_player:
+        return "hero"
+    return "villain"
 
 
 def _action_label(action: Any, bet_size_fractions: tuple[float, ...]) -> str:

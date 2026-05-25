@@ -16,6 +16,7 @@ ALLOWED_BACKENDS = {"rust", "python"}
 ALLOWED_LABEL_INTENTS = {"solver_smoke", "solver_candidate"}
 ALLOWED_SOURCE_TYPES = {"manual_fixture", "ml_snapshot", "pokerth_history", "synthetic"}
 ALLOWED_UNITS = {"chips", "bb"}
+ALLOWED_DECISION_ACTORS = {"hero", "villain", "unknown"}
 CARD_RE = re.compile(r"^(?:[2-9TJQKA][hdcs])$", re.IGNORECASE)
 
 
@@ -104,6 +105,11 @@ def _normalize_solver_job(job: Mapping[str, Any]) -> dict[str, Any]:
     label_intent = str(data["label_intent"])
     if label_intent not in ALLOWED_LABEL_INTENTS:
         raise ValueError(f"unsupported_label_intent:{data['label_intent']}")
+    hero_solver_player = _optional_solver_player(data.get("hero_solver_player", 0))
+    decision_actor = str(data.get("decision_actor", "hero"))
+    if decision_actor not in ALLOWED_DECISION_ACTORS:
+        raise ValueError(f"unsupported_decision_actor:{decision_actor}")
+    root_must_be_hero = _bool_value(data.get("root_must_be_hero", True), "root_must_be_hero")
 
     data.update(
         {
@@ -118,6 +124,9 @@ def _normalize_solver_job(job: Mapping[str, Any]) -> dict[str, Any]:
             "timeout_s": timeout_s,
             "backend": backend,
             "label_intent": label_intent,
+            "hero_solver_player": hero_solver_player,
+            "decision_actor": decision_actor,
+            "root_must_be_hero": root_must_be_hero,
         }
     )
     return data
@@ -194,6 +203,29 @@ def _normalize_bet_sizes(value: Any) -> list[float]:
     if any(size <= 0 for size in bet_sizes):
         raise ValueError("bet_sizes_must_be_positive")
     return bet_sizes
+
+
+def _optional_solver_player(value: Any) -> int | None:
+    if value is None:
+        return None
+    number = int(value)
+    if number not in (0, 1):
+        raise ValueError(f"hero_solver_player_must_be_0_or_1_or_null:{value}")
+    return number
+
+
+def _bool_value(value: Any, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    raise ValueError(f"{field_name}_must_be_bool")
 
 
 def _format_error(exc: BaseException) -> str:

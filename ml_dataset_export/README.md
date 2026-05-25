@@ -10,11 +10,15 @@ du projet.
   `ml_decision_snapshot`.
 - `training_dataset.jsonl` : fichier genere automatiquement pendant les parties,
   avec seulement les lignes directement utilisables pour l'entrainement.
+- `feature_rebuilder.py` : fonctions copiables dans un autre projet pour
+  reconstruire les features derivees et les features "maison".
+- `README_solver_dataset.md` : pipeline separe pour generer un dataset
+  labelise par solver externe sans changer l'export live.
 
 Le vrai dataset doit etre regenere depuis ce projet avec la telemetry active.
 Depuis maintenant, `ml_decision_snapshot` est active par defaut au lancement. Les
 futures mains seront donc ecrites dans :
- 
+
 ```text
 logs/telemetry/<game>/sessions/<session_id>/hands/hand_<hand_id>.jsonl
 ```
@@ -25,6 +29,16 @@ entrainables ici :
 ```text
 dist/ml_dataset_export/training_dataset.jsonl
 ```
+
+Un dataset labelise par solver peut etre genere separement, sans remplacer ce
+fichier live :
+
+```text
+dist/ml_dataset_export/solver_training_dataset.jsonl
+```
+
+Voir `README_solver_dataset.md` pour les commandes de generation, validation et
+branchement d'un vrai solver.
 
 Ce fichier est volontairement plus simple que les logs complets : il ne contient
 pas les `cycle_snapshot`, pas les `player_snapshot`, et pas les labels non
@@ -49,6 +63,47 @@ decision ou la telemetry actuelle :
 - decision legacy : `legacy_action`, `legacy_reason`, `legacy_raise_amount`
 - flags qualite : cartes incertaines, board transitoire, boutons incoherents,
   compteur adversaires incertain, etc.
+
+## Features reconstructibles
+
+Le dataset garde les features observees et plusieurs features deja calculees.
+Si tu veux repartir de logs plus bruts dans un autre projet, `feature_rebuilder.py`
+permet de reconstruire :
+
+- `to_call_pot_ratio` : `to_call / pot`
+- `equity_required` : `to_call / (pot + to_call)`
+- `ev` : `equity_table * (pot + to_call) - to_call`
+- `call_max` : `(equity_table * pot) / (1 - equity_table)`
+- `buttons_active`, `has_check`, `has_call`, `has_raise`
+- `opponent_profiles` a partir des joueurs actifs, actions et stacks
+- `starting_hand_strength` et `preflop_notation` a partir des cartes hero
+- filtre `is_trainable_row(...)` identique a l'export live minimal
+
+Exemple :
+
+```python
+import json
+from feature_rebuilder import rebuild_derived_features, is_trainable_row
+
+with open("training_dataset.jsonl", "r", encoding="utf-8") as handle:
+    row = json.loads(next(handle))
+
+if is_trainable_row(row):
+    rebuilt = rebuild_derived_features(row)
+    print(rebuilt["equity_required"], rebuilt["ev"], rebuilt["call_max"])
+```
+
+Par defaut, le fichier ne relance pas la simulation d'equite. Si tu executes ce
+module depuis le depot complet avec les dependances poker disponibles, tu peux
+demander un recalcul exact de l'equite table :
+
+```python
+rebuilt = rebuild_derived_features(row, recompute_equity=True, simulations=600)
+```
+
+Dans un repo ML separe, le plus simple est souvent de garder `equity_table`
+stockee dans le JSONL, puis de recalculer les ratios, EV, call max et profils si
+tu regeneres des exemples depuis des logs plus bruts.
 
 ## Ce qu'il ne faut pas inventer
 

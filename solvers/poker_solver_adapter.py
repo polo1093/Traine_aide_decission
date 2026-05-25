@@ -13,6 +13,7 @@ import os
 import random
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -21,6 +22,9 @@ from typing import Any, Iterator
 SOLVER_NAME = "PokerSolver"
 DEFAULT_SOLVER_RELATIVE_PATH = Path("projet importer") / "poker_solver-main"
 REQUIRED_RESULT_KEYS = ("status", "solver_name", "input", "output", "error", "duration_ms")
+DEFAULT_TINY_ITERATIONS = 10
+MAX_TINY_ITERATIONS = 100
+DEFAULT_TINY_TIMEOUT_S = 5.0
 
 
 def check_solver_available(solver_path: str | Path | None = None) -> dict[str, Any]:
@@ -224,6 +228,152 @@ def solve_simple_postflop_spot(
         return _result(started, input_payload, None, _format_error(exc))
 
 
+def solve_tiny_postflop_spot(
+    hero_hand: Any,
+    villain_hand: Any | None = None,
+    *,
+    villain_range: str | None = None,
+    board: Any,
+    pot: float,
+    stack: float = 100.0,
+    bet_sizes: Any = (0.33,),
+    iterations: int = DEFAULT_TINY_ITERATIONS,
+    backend: str = "rust",
+    timeout_s: float | None = DEFAULT_TINY_TIMEOUT_S,
+    solver_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Run a bounded concrete postflop smoke solve through PokerSolver.
+
+    The function validates that the heavy solver can be called and return a
+    stable payload. It is not a label-generation API and the low default
+    iteration count is intentionally not strategy-quality.
+    """
+
+    started = time.perf_counter()
+    input_payload = {
+        "hero_hand": hero_hand,
+        "villain_hand": villain_hand,
+        "villain_range": villain_range,
+        "board": board,
+        "pot": pot,
+        "stack": stack,
+        "bet_sizes": bet_sizes,
+        "iterations": iterations,
+        "backend": backend,
+        "timeout_s": timeout_s,
+        "solver_path": _input_path_value(solver_path),
+    }
+
+    try:
+        timeout_value = _validate_timeout(timeout_s)
+        if timeout_value is None:
+            output = _solve_tiny_postflop_spot_output(
+                hero_hand=hero_hand,
+                villain_hand=villain_hand,
+                villain_range=villain_range,
+                board=board,
+                pot=pot,
+                stack=stack,
+                bet_sizes=bet_sizes,
+                iterations=iterations,
+                backend=backend,
+                solver_path=solver_path,
+            )
+            return _result(started, input_payload, output, None)
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(
+            _solve_tiny_postflop_spot_output,
+            hero_hand=hero_hand,
+            villain_hand=villain_hand,
+            villain_range=villain_range,
+            board=board,
+            pot=pot,
+            stack=stack,
+            bet_sizes=bet_sizes,
+            iterations=iterations,
+            backend=backend,
+            solver_path=solver_path,
+        )
+        try:
+            output = future.result(timeout=timeout_value)
+            return _result(started, input_payload, output, None)
+        except TimeoutError:
+            future.cancel()
+            return _result(started, input_payload, None, f"solver_timeout:{timeout_value}s")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+    except Exception as exc:  # noqa: BLE001
+        return _result(started, input_payload, None, _format_error(exc))
+
+
+def _solve_tiny_postflop_spot_output(
+    *,
+    hero_hand: Any,
+    villain_hand: Any | None,
+    villain_range: str | None,
+    board: Any,
+    pot: float,
+    stack: float,
+    bet_sizes: Any,
+    iterations: int,
+    backend: str,
+    solver_path: str | Path | None,
+) -> dict[str, Any]:
+    if villain_hand is None:
+        if villain_range is not None:
+            raise ValueError("villain_range_not_supported_for_tiny_postflop_smoke")
+        raise ValueError("villain_hand is required")
+    if villain_range is not None:
+        raise ValueError("villain_range_not_supported_for_tiny_postflop_smoke")
+
+    iterations_int = _validate_tiny_iterations(iterations)
+    bet_size_fractions = _validate_bet_sizes(bet_sizes)
+    if backend == "rust":
+        rust_available, rust_error = _rust_backend_status()
+        if not rust_available:
+            raise RuntimeError(f"rust_backend_unavailable:{rust_error}")
+    elif backend != "python":
+        raise ValueError(f"unsupported_backend:{backend}")
+
+    solver, error, _ = _load_poker_solver(solver_path)
+    if error is not None:
+        raise RuntimeError(error)
+    missing = _missing_functions(
+        solver,
+        ("parse_hand", "parse_board", "HUNLConfig", "HUNLPoker", "Street", "solve"),
+    )
+    if missing:
+        raise RuntimeError(f"missing_solver_function:{','.join(missing)}")
+
+    hero = tuple(solver.parse_hand(_cards_to_solver_string(hero_hand)))
+    villain = tuple(solver.parse_hand(_cards_to_solver_string(villain_hand)))
+    parsed_board = tuple(solver.parse_board(_cards_to_solver_string(board)))
+    street = _street_from_board_length(solver, len(parsed_board))
+    if street is None:
+        raise ValueError("unsupported_board_length_for_postflop")
+
+    pot_cents = _bb_to_cents(pot)
+    stack_cents = max(_bb_to_cents(stack), pot_cents, 100)
+    config = solver.HUNLConfig(
+        starting_stack=stack_cents,
+        starting_street=street,
+        initial_board=parsed_board,
+        initial_pot=pot_cents,
+        initial_contributions=_initial_contributions(pot_cents, 0),
+        initial_hole_cards=(hero, villain),
+        bet_size_fractions=bet_size_fractions,
+    )
+    solved = solver.solve(solver.HUNLPoker(config), iterations=iterations_int, backend=backend)
+    return {
+        "backend": getattr(solved, "backend", backend),
+        "iterations": getattr(solved, "iterations", None),
+        "game_value": getattr(solved, "game_value", None),
+        "exploitability_history": list(getattr(solved, "exploitability_history", []) or []),
+        "strategy_entry_count": len(getattr(solved, "average_strategy", {}) or {}),
+    }
+
+
 def _load_poker_solver(solver_path: str | Path | None = None) -> tuple[Any | None, str | None, Path | None]:
     resolved_path = _resolve_solver_path(solver_path)
     if not resolved_path.exists():
@@ -336,6 +486,41 @@ def _bb_to_cents(value: Any) -> int:
     return max(0, int(round(float(value) * 100)))
 
 
+def _validate_tiny_iterations(value: Any) -> int:
+    iterations = int(value)
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
+    if iterations > MAX_TINY_ITERATIONS:
+        raise ValueError(f"iterations_exceed_tiny_limit:{MAX_TINY_ITERATIONS}")
+    return iterations
+
+
+def _validate_timeout(value: float | None) -> float | None:
+    if value is None:
+        return None
+    timeout_value = float(value)
+    if timeout_value <= 0:
+        raise ValueError("timeout_s must be positive")
+    return timeout_value
+
+
+def _validate_bet_sizes(value: Any) -> tuple[float, ...]:
+    if isinstance(value, str):
+        raw_parts = [part.strip() for part in value.replace(",", " ").split()]
+    elif isinstance(value, (list, tuple)):
+        raw_parts = list(value)
+    else:
+        raw_parts = [value]
+    bet_sizes = tuple(float(part) for part in raw_parts if str(part).strip())
+    if not bet_sizes:
+        raise ValueError("bet_sizes must not be empty")
+    if len(bet_sizes) > 5:
+        raise ValueError("bet_sizes_exceed_tiny_limit:5")
+    if any(size <= 0 for size in bet_sizes):
+        raise ValueError("bet_sizes must be positive")
+    return bet_sizes
+
+
 def _cards_to_solver_string(value: Any, *, allow_empty: bool = False) -> str:
     if value is None:
         if allow_empty:
@@ -426,5 +611,5 @@ __all__ = [
     "compute_equity_hand_vs_hand",
     "compute_equity_hand_vs_range",
     "solve_simple_postflop_spot",
+    "solve_tiny_postflop_spot",
 ]
-

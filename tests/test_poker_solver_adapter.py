@@ -83,6 +83,7 @@ def test_all_public_functions_have_stable_format_when_solver_path_is_invalid(tmp
         adapter.compute_equity_hand_vs_hand("AhKh", "QdQc", solver_path=missing),
         adapter.compute_equity_hand_vs_range("AhKh", "AA,KK", solver_path=missing),
         adapter.solve_simple_postflop_spot("AhKh", "QdQc", board="2h7h9d", pot=10, solver_path=missing),
+        adapter.solve_tiny_postflop_spot("AhKh", "QdQc", board="2h7h9d", pot=10, solver_path=missing),
     ]
     for result in results:
         assert_stable_result(result)
@@ -96,6 +97,16 @@ def test_real_import_if_dependencies_are_available() -> None:
         pytest.skip(f"PokerSolver is not importable in this environment: {result['error']}")
     assert result["output"]["available"] is True
     assert result["output"]["functions"]["equity"] is True
+
+
+def test_real_rust_backend_available_if_solver_imports() -> None:
+    result = adapter.check_solver_available()
+    assert_stable_result(result)
+    if result["status"] == "failed":
+        pytest.skip(f"PokerSolver is not importable in this environment: {result['error']}")
+
+    assert result["output"]["available"] is True
+    assert result["output"]["rust_backend_available"] is True, result["output"]["rust_backend_error"]
 
 
 def test_real_equity_hand_vs_hand_if_solver_imports() -> None:
@@ -114,3 +125,129 @@ def test_real_equity_hand_vs_hand_if_solver_imports() -> None:
     assert 0.0 <= result["output"]["hero_equity"] <= 1.0
     assert 0.0 <= result["output"]["villain_equity"] <= 1.0
 
+
+def test_rust_backend_unavailable_returns_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeSolver:
+        @staticmethod
+        def parse_hand(value):
+            return value
+
+        @staticmethod
+        def parse_board(value):
+            return value
+
+        class HUNLConfig:
+            pass
+
+        class HUNLPoker:
+            pass
+
+        class Street:
+            FLOP = "flop"
+            TURN = "turn"
+            RIVER = "river"
+
+        @staticmethod
+        def solve(*args, **kwargs):
+            raise AssertionError("solve should not run when rust backend is unavailable")
+
+    monkeypatch.setattr(adapter, "_load_poker_solver", lambda solver_path=None: (FakeSolver(), None, None))
+    monkeypatch.setattr(adapter, "_rust_backend_status", lambda: (False, "ModuleNotFoundError:boom"))
+
+    result = adapter.solve_simple_postflop_spot(
+        "AhKh",
+        "QdQc",
+        board="As 7c 2d Kh 5s",
+        pot=10,
+        iterations=2,
+        backend="rust",
+    )
+
+    assert_stable_result(result)
+    assert result["status"] == "failed"
+    assert result["error"] == "rust_backend_unavailable:ModuleNotFoundError:boom"
+
+
+def test_tiny_rust_backend_unavailable_returns_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adapter, "_rust_backend_status", lambda: (False, "ModuleNotFoundError:boom"))
+
+    result = adapter.solve_tiny_postflop_spot(
+        "AhKh",
+        "QdQc",
+        board="As 7c 2d Kh 5s",
+        pot=10,
+        iterations=10,
+        backend="rust",
+        timeout_s=1,
+    )
+
+    assert_stable_result(result)
+    assert result["status"] == "failed"
+    assert "rust_backend_unavailable:ModuleNotFoundError:boom" in result["error"]
+
+
+def test_tiny_invalid_input_returns_failed() -> None:
+    result = adapter.solve_tiny_postflop_spot(
+        "AhKh",
+        "QdQc",
+        board="As 7c",
+        pot=10,
+        iterations=10,
+        backend="rust",
+        timeout_s=1,
+    )
+
+    assert_stable_result(result)
+    assert result["status"] == "failed"
+    assert result["error"] is not None
+
+
+def test_real_simple_postflop_rust_solve_if_backend_imports() -> None:
+    availability = adapter.check_solver_available()
+    if availability["status"] == "failed":
+        pytest.skip(f"PokerSolver is not importable in this environment: {availability['error']}")
+    if not availability["output"]["rust_backend_available"]:
+        pytest.skip(f"PokerSolver Rust backend is unavailable: {availability['output']['rust_backend_error']}")
+
+    result = adapter.solve_simple_postflop_spot(
+        "AhKh",
+        "QdQc",
+        board="As 7c 2d Kh 5s",
+        pot=10,
+        stack=100,
+        iterations=2,
+        backend="rust",
+    )
+
+    assert_stable_result(result)
+    assert result["status"] == "ok", result["error"]
+    assert result["output"]["backend"] == "rust"
+    assert result["output"]["iterations"] == 2
+    assert isinstance(result["output"]["strategy_entry_count"], int)
+
+
+def test_real_tiny_postflop_rust_solve_if_backend_imports() -> None:
+    availability = adapter.check_solver_available()
+    if availability["status"] == "failed":
+        pytest.skip(f"PokerSolver is not importable in this environment: {availability['error']}")
+    if not availability["output"]["rust_backend_available"]:
+        pytest.skip(f"PokerSolver Rust backend is unavailable: {availability['output']['rust_backend_error']}")
+
+    result = adapter.solve_tiny_postflop_spot(
+        "AhKh",
+        "QdQc",
+        board="As 7c 2d Kh 5s",
+        pot=10,
+        stack=100,
+        bet_sizes=(0.33,),
+        iterations=10,
+        backend="rust",
+        timeout_s=5,
+    )
+
+    assert_stable_result(result)
+    assert result["status"] == "ok", result["error"]
+    assert result["output"]["backend"] == "rust"
+    assert result["output"]["iterations"] == 10
+    assert isinstance(result["output"]["game_value"], float)
+    assert isinstance(result["output"]["strategy_entry_count"], int)

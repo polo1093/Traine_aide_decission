@@ -71,6 +71,8 @@ Each line is a `solver_run_result` record:
   "source_type": "synthetic",
   "solver_job": {},
   "solver_result": {},
+  "solver_status": "ok",
+  "duration_ms": 12.5,
   "quality": {
     "is_label_candidate": false,
     "exclusion_reason": "iterations_too_low"

@@ -62,6 +62,7 @@ def assert_record_stable(record: dict[str, Any]) -> None:
         "solver_job",
         "solver_result",
         "solver_status",
+        "duration_ms",
         "quality",
         "error",
         "warnings",
@@ -69,6 +70,7 @@ def assert_record_stable(record: dict[str, Any]) -> None:
     }
     assert record["record_type"] == "solver_run_result"
     assert record["source_type"] is None or record["source_type"] == "synthetic"
+    assert record["duration_ms"] is None or isinstance(record["duration_ms"], float)
     assert record["quality"]["is_label_candidate"] is False
     assert isinstance(record["warnings"], list)
     assert "training_label" not in record

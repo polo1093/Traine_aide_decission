@@ -63,6 +63,7 @@ def run_solver_job_file(
                         error=load_error,
                         warnings=[f"line_index:{line_index}"],
                         quality=_quality(None, None, "job_load_failed"),
+                        duration_ms=None,
                     )
                 )
                 if stop_on_error:
@@ -91,6 +92,7 @@ def run_solver_job_file(
                     error=write_error,
                     warnings=[],
                     quality=_quality(None, None, "jsonl_write_failed"),
+                    duration_ms=None,
                 )
             )
         result["duration_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
@@ -115,6 +117,7 @@ def run_solver_job_file(
                         error=_format_error(exc),
                         warnings=[],
                         quality=_quality(None, None, "runner_failed"),
+                        duration_ms=None,
                     )
                 ],
             }
@@ -131,6 +134,7 @@ def _run_one_job(raw_job: Any, *, dry_run: bool, line_index: int, use_subprocess
             error=validation["error"],
             warnings=[f"line_index:{line_index}"],
             quality=_quality(None, None, "job_validation_failed"),
+            duration_ms=None,
         )
 
     solver_job = validation["job"]
@@ -142,6 +146,7 @@ def _run_one_job(raw_job: Any, *, dry_run: bool, line_index: int, use_subprocess
             error=f"unsupported_source_type_for_file_runner:{solver_job['source_type']}",
             warnings=[f"line_index:{line_index}"],
             quality=_quality(solver_job.get("iterations"), None, "unsupported_source_type"),
+            duration_ms=None,
         )
 
     if dry_run:
@@ -152,6 +157,7 @@ def _run_one_job(raw_job: Any, *, dry_run: bool, line_index: int, use_subprocess
             error=None,
             warnings=[f"line_index:{line_index}", "dry_run"],
             quality=_quality(solver_job["iterations"], None, "dry_run"),
+            duration_ms=0.0,
         )
 
     eligibility = evaluate_solver_eligibility(solver_job)
@@ -165,6 +171,7 @@ def _run_one_job(raw_job: Any, *, dry_run: bool, line_index: int, use_subprocess
             warnings=[f"line_index:{line_index}", "solver_skipped", *eligibility.get("warnings", [])],
             quality=_quality(solver_job["iterations"], None, reason),
             solver_status="skipped",
+            duration_ms=0.0,
         )
 
     if use_subprocess:
@@ -173,6 +180,7 @@ def _run_one_job(raw_job: Any, *, dry_run: bool, line_index: int, use_subprocess
         solver_status = subprocess_result.get("solver_status")
         error = subprocess_result.get("error")
         quality = subprocess_result.get("quality")
+        duration_ms = subprocess_result.get("duration_ms")
         warnings = [f"line_index:{line_index}", "subprocess"]
         if subprocess_result.get("solver_status") == "timeout":
             warnings.append("timeout")
@@ -181,6 +189,7 @@ def _run_one_job(raw_job: Any, *, dry_run: bool, line_index: int, use_subprocess
         solver_status = solver_result.get("status")
         error = None if solver_status == "ok" else solver_result.get("error") or "solver_failed"
         quality = solver_result.get("quality")
+        duration_ms = solver_result.get("duration_ms")
         warnings = [f"line_index:{line_index}", "direct_solver"]
     return _record(
         raw_job=solver_job,
@@ -190,6 +199,7 @@ def _run_one_job(raw_job: Any, *, dry_run: bool, line_index: int, use_subprocess
         warnings=warnings,
         quality=_force_not_label_candidate(quality),
         solver_status=solver_status,
+        duration_ms=duration_ms,
     )
 
 
@@ -278,6 +288,7 @@ def _record(
     warnings: list[str],
     quality: dict[str, Any],
     solver_status: str | None = None,
+    duration_ms: Any = None,
 ) -> dict[str, Any]:
     job_for_ids = solver_job or raw_job or {}
     record = {
@@ -288,6 +299,7 @@ def _record(
         "solver_job": solver_job,
         "solver_result": solver_result,
         "solver_status": solver_status or _status_from_solver_result(solver_result, error),
+        "duration_ms": _optional_float(duration_ms),
         "quality": _force_not_label_candidate(quality),
         "error": error,
         "warnings": list(warnings),
@@ -365,6 +377,15 @@ def _without_extra_keys(result: dict[str, Any]) -> dict[str, Any]:
 
 def _optional_text(value: Any) -> str | None:
     return None if value is None else str(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _utc_now() -> str:

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from experiments.calibrate_solver_runtime import run_calibration, write_calibration_jsonl
+from experiments.calibrate_solver_runtime import run_calibration, write_calibration_jsonl, write_calibration_summary_json
 
 
 def fake_solver(job: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
@@ -61,14 +61,19 @@ def test_calibration_summary_counts_successes_and_timeouts() -> None:
     assert summary["status"] == "ok"
     assert summary["total_planned"] == 4
     assert summary["total_run"] == 4
+    assert summary["solved"] == 2
     assert summary["successes"] == 2
     assert summary["timeouts"] == 2
     assert summary["errors"] == 0
     assert summary["profiles"]["random_flop_spot"]["successes"] == 2
+    assert summary["profiles"]["random_flop_spot"]["success_rate"] == 1.0
     assert summary["profiles"]["drawy_board_spot"]["timeouts"] == 2
+    assert summary["iterations_summary"]["1"]["total"] == 2
+    assert summary["profile_iterations"]["drawy_board_spot"]["1"]["timeouts"] == 1
     assert summary["profiles_too_heavy"] == ["drawy_board_spot"]
     assert summary["profiles_exploitable_for_smoke"] == ["random_flop_spot"]
     assert summary["recommended_parameters"]["iterations"] == 1
+    assert summary["recommendations"]["profiles"]["random_flop_spot"] == "stable_for_solver_batch"
     assert all(row["is_label_candidate"] is False for row in summary["results"])
     assert all(row["quality"]["is_label_candidate"] is False for row in summary["results"])
 
@@ -121,3 +126,21 @@ def test_write_calibration_jsonl_roundtrip(tmp_path: Path) -> None:
     assert "training_label" not in rows[0]
     assert "gto_label" not in rows[0]
     assert "label_action" not in rows[0]
+
+
+def test_write_calibration_summary_json(tmp_path: Path) -> None:
+    summary = run_calibration(
+        profiles=["random_river_spot"],
+        jobs_per_profile=1,
+        iterations=[1, 5],
+        timeout_s=5,
+        solver_func=fake_solver,
+    )
+    output_path = tmp_path / "summary.json"
+
+    write_result = write_calibration_summary_json(summary, output_path)
+
+    assert write_result["status"] == "ok", write_result["error"]
+    loaded = json.loads(output_path.read_text(encoding="utf-8"))
+    assert loaded["total_run"] == 2
+    assert loaded["recommendations"]["stable_profile_iterations"]["random_river_spot"] == [1, 5]

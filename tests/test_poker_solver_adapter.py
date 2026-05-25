@@ -10,6 +10,52 @@ from solvers import poker_solver_adapter as adapter
 REQUIRED_KEYS = {"status", "solver_name", "input", "output", "error", "duration_ms"}
 
 
+class FakeTinySolver:
+    class Street:
+        FLOP = "FLOP"
+        TURN = "TURN"
+        RIVER = "RIVER"
+
+    class HUNLConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class HUNLPoker:
+        def __init__(self, config):
+            self.config = config
+
+        def initial_state(self):
+            return {"state": "root"}
+
+        def current_player(self, state):
+            return 1
+
+        def infoset_key(self, state, player):
+            return "root"
+
+        def legal_actions(self, state):
+            return [1, 3, 13]
+
+    @staticmethod
+    def parse_hand(value):
+        return tuple(str(value).split())
+
+    @staticmethod
+    def parse_board(value):
+        return tuple(str(value).split())
+
+    @staticmethod
+    def solve(game, *, iterations, backend):
+        class Solved:
+            average_strategy = {"root": [0.2, 0.7, 0.1]}
+            exploitability_history = [0.25]
+            game_value = 1.5
+            backend = "python"
+            iterations = 25
+
+        return Solved()
+
+
 def assert_stable_result(result: dict) -> None:
     assert set(result) == REQUIRED_KEYS
     assert result["status"] in {"ok", "failed"}
@@ -18,6 +64,13 @@ def assert_stable_result(result: dict) -> None:
     assert result["output"] is None or isinstance(result["output"], dict)
     assert result["error"] is None or isinstance(result["error"], str)
     assert isinstance(result["duration_ms"], float)
+
+
+def assert_not_label_payload(output: dict) -> None:
+    assert "training_label" not in output
+    assert "gto_label" not in output
+    assert "label_action" not in output
+    assert output.get("is_label_candidate") is not True
 
 
 def test_solver_absent_returns_failed(tmp_path: Path) -> None:
@@ -251,3 +304,69 @@ def test_real_tiny_postflop_rust_solve_if_backend_imports() -> None:
     assert result["output"]["iterations"] == 10
     assert isinstance(result["output"]["game_value"], float)
     assert isinstance(result["output"]["strategy_entry_count"], int)
+
+
+def test_tiny_postflop_exposes_root_strategy_raw(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adapter, "_load_poker_solver", lambda solver_path=None: (FakeTinySolver, None, None))
+
+    result = adapter.solve_tiny_postflop_spot(
+        ["Ah", "Kh"],
+        ["Qd", "Qc"],
+        board=["As", "7c", "2d", "Kh", "5s"],
+        pot=10,
+        stack=100,
+        bet_sizes=(0.66,),
+        iterations=25,
+        backend="python",
+        timeout_s=None,
+    )
+
+    assert_stable_result(result)
+    assert result["status"] == "ok", result["error"]
+    output = result["output"]
+    raw = output["root_strategy_raw"]
+    assert raw["infoset_key"] == "root"
+    assert raw["source"] == "average_strategy"
+    assert raw["player"] == 1
+    assert raw["root_player"] == 1
+    assert raw["root_player_role"] == "unknown"
+    assert raw["action_ids"] == [1, 3, 13]
+    assert raw["action_labels"] == ["CHECK", "BET_66", "ALL_IN"]
+    assert raw["frequencies"] == [0.2, 0.7, 0.1]
+    assert raw["bet_size_fractions"] == [0.66]
+    assert output["root_strategy_error"] is None
+    assert_not_label_payload(output)
+
+
+def test_tiny_postflop_root_strategy_missing_is_controlled(monkeypatch: pytest.MonkeyPatch) -> None:
+    class MissingRootSolver(FakeTinySolver):
+        @staticmethod
+        def solve(game, *, iterations, backend):
+            class Solved:
+                average_strategy = {"other": [0.2, 0.7, 0.1]}
+                exploitability_history = []
+                game_value = 0.0
+                backend = "python"
+                iterations = 25
+
+            return Solved()
+
+    monkeypatch.setattr(adapter, "_load_poker_solver", lambda solver_path=None: (MissingRootSolver, None, None))
+
+    result = adapter.solve_tiny_postflop_spot(
+        ["Ah", "Kh"],
+        ["Qd", "Qc"],
+        board=["As", "7c", "2d", "Kh", "5s"],
+        pot=10,
+        stack=100,
+        bet_sizes=(0.66,),
+        iterations=25,
+        backend="python",
+        timeout_s=None,
+    )
+
+    assert_stable_result(result)
+    assert result["status"] == "ok", result["error"]
+    assert result["output"]["root_strategy_raw"] is None
+    assert result["output"]["root_strategy_error"] == "root_strategy_not_available:root_infoset_missing"
+    assert_not_label_payload(result["output"])

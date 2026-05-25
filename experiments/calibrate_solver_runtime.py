@@ -96,14 +96,18 @@ def run_calibration(
             "max_total_jobs": max_total_jobs,
             "total_planned": 0,
             "total_run": 0,
+            "solved": 0,
             "successes": 0,
             "timeouts": 0,
             "errors": 0,
             "avg_success_duration_ms": None,
             "profiles": {},
+            "iterations_summary": {},
+            "profile_iterations": {},
             "profiles_too_heavy": [],
             "profiles_exploitable_for_smoke": [],
             "recommended_parameters": _recommended_parameters([]),
+            "recommendations": _recommendations({}, {}, {}),
             "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
             "error": _format_error(exc),
             "results": [],
@@ -149,6 +153,7 @@ def main() -> int:
     parser.add_argument("--max-total-jobs", type=int, default=DEFAULT_MAX_TOTAL_JOBS)
     parser.add_argument("--allow-large-run", action="store_true")
     parser.add_argument("--output", default=None, help="Optional JSONL path for per-job calibration records.")
+    parser.add_argument("--summary-output", default=None, help="Optional JSON path for the full calibration summary.")
     args = parser.parse_args()
 
     summary = run_calibration(
@@ -163,14 +168,47 @@ def main() -> int:
     write_result = None
     if args.output is not None:
         write_result = write_calibration_jsonl(summary, args.output)
+    summary_write_result = None
+    if args.summary_output is not None:
+        summary_write_result = write_calibration_summary_json(summary, args.summary_output)
 
     printable = dict(summary)
     printable["results"] = printable["results"][:5]
     printable["results_truncated"] = len(summary["results"]) > 5
     if write_result is not None:
         printable["write"] = write_result
+    if summary_write_result is not None:
+        printable["summary_write"] = summary_write_result
     print(json.dumps(printable, indent=2, ensure_ascii=False, default=str))
-    return 0 if summary["status"] == "ok" and (write_result is None or write_result["status"] == "ok") else 1
+    writes_ok = (write_result is None or write_result["status"] == "ok") and (
+        summary_write_result is None or summary_write_result["status"] == "ok"
+    )
+    return 0 if summary["status"] == "ok" and writes_ok else 1
+
+
+def write_calibration_summary_json(summary: dict[str, Any], output_path: str | Path) -> dict[str, Any]:
+    """Write the full calibration summary to JSON."""
+
+    started = time.perf_counter()
+    path = Path(output_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="\n") as handle:
+            json.dump(summary, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        return {
+            "status": "ok",
+            "output_path": str(path),
+            "error": None,
+            "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "failed",
+            "output_path": str(path),
+            "error": _format_error(exc),
+            "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        }
 
 
 def _run_one_calibration_job(
@@ -206,38 +244,75 @@ def _summary(results: list[dict[str, Any]], profiles: tuple[str, ...]) -> dict[s
     timeouts = [row for row in results if row["status"] == "timeout"]
     errors = [row for row in results if row["status"] == "failed"]
     profile_summary = {profile: _profile_summary(profile, results) for profile in profiles}
+    iteration_summary = _iteration_summary(results)
+    profile_iteration_summary = _profile_iteration_summary(results)
     too_heavy = [
         profile
         for profile, item in profile_summary.items()
-        if item["timeouts"] > 0 or item["successes"] == 0
+        if item["timeouts"] > 0 or item["solved"] == 0
     ]
     smoke_ready = [
         profile
         for profile, item in profile_summary.items()
-        if item["total"] > 0 and item["successes"] == item["total"]
+        if item["total"] > 0 and item["solved"] == item["total"]
     ]
     return {
         "total_run": len(results),
+        "solved": len(successes),
         "successes": len(successes),
         "timeouts": len(timeouts),
         "errors": len(errors),
         "avg_success_duration_ms": _average([row["duration_ms"] for row in successes]),
         "profiles": profile_summary,
+        "iterations_summary": iteration_summary,
+        "profile_iterations": profile_iteration_summary,
         "profiles_too_heavy": too_heavy,
         "profiles_exploitable_for_smoke": smoke_ready,
         "recommended_parameters": _recommended_parameters(results),
+        "recommendations": _recommendations(profile_summary, iteration_summary, profile_iteration_summary),
     }
 
 
 def _profile_summary(profile: str, results: list[dict[str, Any]]) -> dict[str, Any]:
     rows = [row for row in results if row["profile"] == profile]
-    successes = [row for row in rows if row["status"] == "ok"]
+    return _run_summary(rows)
+
+
+def _iteration_summary(results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    iterations = sorted({row["iterations"] for row in results})
+    return {str(iterations_value): _run_summary([row for row in results if row["iterations"] == iterations_value]) for iterations_value in iterations}
+
+
+def _profile_iteration_summary(results: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
+    profiles = sorted({row["profile"] for row in results})
+    iterations = sorted({row["iterations"] for row in results})
     return {
-        "total": len(rows),
+        profile: {
+            str(iterations_value): _run_summary(
+                [row for row in results if row["profile"] == profile and row["iterations"] == iterations_value]
+            )
+            for iterations_value in iterations
+        }
+        for profile in profiles
+    }
+
+
+def _run_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    successes = [row for row in rows if row["status"] == "ok"]
+    timeouts = [row for row in rows if row["status"] == "timeout"]
+    errors = [row for row in rows if row["status"] == "failed"]
+    total = len(rows)
+    return {
+        "total": total,
+        "solved": len(successes),
         "successes": len(successes),
-        "timeouts": sum(1 for row in rows if row["status"] == "timeout"),
-        "errors": sum(1 for row in rows if row["status"] == "failed"),
+        "timeouts": len(timeouts),
+        "errors": len(errors),
+        "success_rate": _rate(len(successes), total),
+        "timeout_rate": _rate(len(timeouts), total),
         "avg_success_duration_ms": _average([row["duration_ms"] for row in successes]),
+        "avg_duration_ms": _average([row["duration_ms"] for row in rows]),
+        "recommendation": _recommend_group(rows),
     }
 
 
@@ -257,6 +332,58 @@ def _recommended_parameters(results: list[dict[str, Any]]) -> dict[str, Any]:
         "timeout_s": 5.0,
         "note": "Use only profiles listed in profiles_exploitable_for_smoke for smoke solves.",
     }
+
+
+def _recommendations(
+    profile_summary: dict[str, dict[str, Any]],
+    iteration_summary: dict[str, dict[str, Any]],
+    profile_iteration_summary: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, Any]:
+    stable_profile_iterations: dict[str, list[int]] = {}
+    avoid_profile_iterations: dict[str, list[int]] = {}
+    for profile, per_iteration in profile_iteration_summary.items():
+        stable_profile_iterations[profile] = []
+        avoid_profile_iterations[profile] = []
+        for iteration_text, item in per_iteration.items():
+            if item["recommendation"] == "stable_for_solver_batch":
+                stable_profile_iterations[profile].append(int(iteration_text))
+            elif item["recommendation"] != "no_rows":
+                avoid_profile_iterations[profile].append(int(iteration_text))
+
+    return {
+        "profiles": {profile: item["recommendation"] for profile, item in profile_summary.items()},
+        "iterations": {iteration: item["recommendation"] for iteration, item in iteration_summary.items()},
+        "stable_profile_iterations": stable_profile_iterations,
+        "avoid_profile_iterations": avoid_profile_iterations,
+        "policy": {
+            "not_recommended_success_rate_below": 0.80,
+            "not_recommended_timeout_rate_above": 0.10,
+            "avoid_large_batch_avg_duration_ms_above": 3000.0,
+            "stable_success_rate_above": 0.90,
+            "stable_avg_duration_ms_at_or_below": 3000.0,
+        },
+        "labeling": "is_label_candidate remains false; no training_label is created.",
+    }
+
+
+def _recommend_group(rows: list[dict[str, Any]]) -> str:
+    total = len(rows)
+    if total == 0:
+        return "no_rows"
+    solved = sum(1 for row in rows if row["status"] == "ok")
+    timeouts = sum(1 for row in rows if row["status"] == "timeout")
+    success_rate = solved / total
+    timeout_rate = timeouts / total
+    avg_duration = _average([row["duration_ms"] for row in rows])
+    if success_rate < 0.80:
+        return "not_recommended_success_rate_below_80_percent"
+    if timeout_rate > 0.10:
+        return "not_recommended_timeout_rate_above_10_percent"
+    if avg_duration is not None and avg_duration > 3000.0:
+        return "avoid_large_batches_avg_duration_above_3000_ms"
+    if success_rate > 0.90 and (avg_duration is None or avg_duration <= 3000.0):
+        return "stable_for_solver_batch"
+    return "usable_with_caution"
 
 
 def _make_iteration_specific_job(job: dict[str, Any], iterations: int) -> dict[str, Any]:
@@ -317,6 +444,12 @@ def _average(values: list[Any]) -> float | None:
     if not numeric:
         return None
     return round(sum(numeric) / len(numeric), 3)
+
+
+def _rate(count: int, total: int) -> float | None:
+    if total <= 0:
+        return None
+    return round(count / total, 4)
 
 
 def _force_not_label_candidate(value: Any) -> dict[str, Any]:

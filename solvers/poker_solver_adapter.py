@@ -364,13 +364,21 @@ def _solve_tiny_postflop_spot_output(
         initial_hole_cards=(hero, villain),
         bet_size_fractions=bet_size_fractions,
     )
-    solved = solver.solve(solver.HUNLPoker(config), iterations=iterations_int, backend=backend)
+    game = solver.HUNLPoker(config)
+    solved = solver.solve(game, iterations=iterations_int, backend=backend)
+    root_strategy_raw, root_strategy_error = _extract_root_strategy_raw(
+        game=game,
+        solved=solved,
+        bet_size_fractions=bet_size_fractions,
+    )
     return {
         "backend": getattr(solved, "backend", backend),
         "iterations": getattr(solved, "iterations", None),
         "game_value": getattr(solved, "game_value", None),
         "exploitability_history": list(getattr(solved, "exploitability_history", []) or []),
         "strategy_entry_count": len(getattr(solved, "average_strategy", {}) or {}),
+        "root_strategy_raw": root_strategy_raw,
+        "root_strategy_error": root_strategy_error,
     }
 
 
@@ -519,6 +527,93 @@ def _validate_bet_sizes(value: Any) -> tuple[float, ...]:
     if any(size <= 0 for size in bet_sizes):
         raise ValueError("bet_sizes must be positive")
     return bet_sizes
+
+
+def _extract_root_strategy_raw(
+    *,
+    game: Any,
+    solved: Any,
+    bet_size_fractions: tuple[float, ...],
+) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        average_strategy = getattr(solved, "average_strategy", None)
+        if not isinstance(average_strategy, dict) or not average_strategy:
+            return None, "root_strategy_not_available:average_strategy_missing"
+
+        state = game.initial_state()
+        player = game.current_player(state)
+        if player is None or int(player) < 0:
+            return None, "root_strategy_not_available:no_current_player"
+        root_key = game.infoset_key(state, player)
+        actions = list(game.legal_actions(state))
+        probs = average_strategy.get(root_key)
+        if probs is None:
+            return None, "root_strategy_not_available:root_infoset_missing"
+        frequencies = _numeric_frequencies(probs)
+        if frequencies is None:
+            return None, "root_strategy_not_available:invalid_frequency_value"
+        if len(actions) != len(frequencies):
+            return None, "root_strategy_not_available:action_frequency_length_mismatch"
+        total = sum(frequencies)
+        if total < 0.98 or total > 1.02:
+            return None, "root_strategy_not_available:invalid_frequency_sum"
+
+        return (
+            {
+                "infoset_key": str(root_key),
+                "player": int(player),
+                "root_player": int(player),
+                "root_player_role": "unknown",
+                "action_ids": [int(action) for action in actions],
+                "action_labels": [_action_label(action, bet_size_fractions) for action in actions],
+                "frequencies": [round(float(value), 12) for value in frequencies],
+                "source": "average_strategy",
+                "bet_size_fractions": [float(value) for value in bet_size_fractions],
+            },
+            None,
+        )
+    except Exception as exc:  # noqa: BLE001 - strategy inspection is best-effort
+        return None, f"root_strategy_not_available:{_format_error(exc)}"
+
+
+def _numeric_frequencies(values: Any) -> list[float] | None:
+    if not isinstance(values, (list, tuple)):
+        return None
+    frequencies: list[float] = []
+    for value in values:
+        try:
+            frequency = float(value)
+        except (TypeError, ValueError):
+            return None
+        if frequency < 0.0 or frequency > 1.0:
+            return None
+        frequencies.append(frequency)
+    return frequencies
+
+
+def _action_label(action: Any, bet_size_fractions: tuple[float, ...]) -> str:
+    action_id = int(action)
+    if action_id == 0:
+        return "FOLD"
+    if action_id == 1:
+        return "CHECK"
+    if action_id == 2:
+        return "CALL"
+    if 3 <= action_id <= 7:
+        return f"BET_{_fraction_label(bet_size_fractions[action_id - 3])}"
+    if 8 <= action_id <= 12:
+        return f"RAISE_{_fraction_label(bet_size_fractions[action_id - 8])}"
+    if action_id == 13:
+        return "ALL_IN"
+    return f"ACTION_{action_id}"
+
+
+def _fraction_label(value: float) -> str:
+    percent = float(value) * 100.0
+    if abs(percent - round(percent)) < 1e-9:
+        return str(int(round(percent)))
+    text = f"{percent:.2f}".rstrip("0").rstrip(".")
+    return text.replace(".", "_")
 
 
 def _cards_to_solver_string(value: Any, *, allow_empty: bool = False) -> str:

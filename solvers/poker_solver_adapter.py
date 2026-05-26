@@ -220,7 +220,7 @@ def solve_simple_postflop_spot(
             "backend": getattr(solved, "backend", backend),
             "iterations": getattr(solved, "iterations", None),
             "game_value": getattr(solved, "game_value", None),
-            "exploitability_history": list(getattr(solved, "exploitability_history", []) or []),
+            "exploitability_history": _float_list(getattr(solved, "exploitability_history", []) or []),
             "strategy_entry_count": len(getattr(solved, "average_strategy", {}) or {}),
         }
         return _result(started, input_payload, output, None)
@@ -244,6 +244,8 @@ def solve_tiny_postflop_spot(
     hero_solver_player: int | None = 0,
     decision_actor: str = "hero",
     root_must_be_hero: bool = True,
+    initial_hole_cards: Any = None,
+    initial_contributions: Any = None,
 ) -> dict[str, Any]:
     """Run a bounded concrete postflop smoke solve through PokerSolver.
 
@@ -268,6 +270,8 @@ def solve_tiny_postflop_spot(
         "hero_solver_player": hero_solver_player,
         "decision_actor": decision_actor,
         "root_must_be_hero": root_must_be_hero,
+        "initial_hole_cards": initial_hole_cards,
+        "initial_contributions": initial_contributions,
     }
 
     try:
@@ -287,6 +291,8 @@ def solve_tiny_postflop_spot(
                 hero_solver_player=hero_solver_player,
                 decision_actor=decision_actor,
                 root_must_be_hero=root_must_be_hero,
+                initial_hole_cards=initial_hole_cards,
+                initial_contributions=initial_contributions,
             )
             return _result(started, input_payload, output, None)
 
@@ -303,10 +309,12 @@ def solve_tiny_postflop_spot(
             iterations=iterations,
             backend=backend,
             solver_path=solver_path,
-            hero_solver_player=hero_solver_player,
-            decision_actor=decision_actor,
-            root_must_be_hero=root_must_be_hero,
-        )
+                hero_solver_player=hero_solver_player,
+                decision_actor=decision_actor,
+                root_must_be_hero=root_must_be_hero,
+                initial_hole_cards=initial_hole_cards,
+                initial_contributions=initial_contributions,
+            )
         try:
             output = future.result(timeout=timeout_value)
             return _result(started, input_payload, output, None)
@@ -334,6 +342,8 @@ def _solve_tiny_postflop_spot_output(
     hero_solver_player: int | None,
     decision_actor: str,
     root_must_be_hero: bool,
+    initial_hole_cards: Any,
+    initial_contributions: Any,
 ) -> dict[str, Any]:
     if villain_hand is None:
         if villain_range is not None:
@@ -369,16 +379,25 @@ def _solve_tiny_postflop_spot_output(
     street = _street_from_board_length(solver, len(parsed_board))
     if street is None:
         raise ValueError("unsupported_board_length_for_postflop")
+    parsed_initial_hole_cards = _parse_initial_hole_cards(
+        solver=solver,
+        value=initial_hole_cards,
+        default=(hero, villain),
+    )
 
     pot_cents = _bb_to_cents(pot)
     stack_cents = max(_bb_to_cents(stack), pot_cents, 100)
+    contribution_cents = _parse_initial_contributions(
+        initial_contributions,
+        default=_initial_contributions(pot_cents, 0),
+    )
     config = solver.HUNLConfig(
         starting_stack=stack_cents,
         starting_street=street,
         initial_board=parsed_board,
         initial_pot=pot_cents,
-        initial_contributions=_initial_contributions(pot_cents, 0),
-        initial_hole_cards=(hero, villain),
+        initial_contributions=contribution_cents,
+        initial_hole_cards=parsed_initial_hole_cards,
         bet_size_fractions=bet_size_fractions,
     )
     game = solver.HUNLPoker(config)
@@ -395,7 +414,7 @@ def _solve_tiny_postflop_spot_output(
         "backend": getattr(solved, "backend", backend),
         "iterations": getattr(solved, "iterations", None),
         "game_value": getattr(solved, "game_value", None),
-        "exploitability_history": list(getattr(solved, "exploitability_history", []) or []),
+        "exploitability_history": _float_list(getattr(solved, "exploitability_history", []) or []),
         "strategy_entry_count": len(getattr(solved, "average_strategy", {}) or {}),
         "root_strategy_raw": root_strategy_raw,
         "root_strategy_error": root_strategy_error,
@@ -515,6 +534,30 @@ def _initial_contributions(pot_cents: int, to_call_cents: int) -> tuple[int, int
     return (lower, pot_cents - lower)
 
 
+def _parse_initial_hole_cards(
+    *,
+    solver: Any,
+    value: Any,
+    default: tuple[tuple[Any, ...], tuple[Any, ...]],
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    if value is None:
+        return default
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("initial_hole_cards_must_have_two_players")
+    return (
+        tuple(solver.parse_hand(_cards_to_solver_string(value[0]))),
+        tuple(solver.parse_hand(_cards_to_solver_string(value[1]))),
+    )
+
+
+def _parse_initial_contributions(value: Any, *, default: tuple[int, int]) -> tuple[int, int]:
+    if value is None:
+        return default
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("initial_contributions_must_have_two_players")
+    return (_bb_to_cents(value[0]), _bb_to_cents(value[1]))
+
+
 def _bb_to_cents(value: Any) -> int:
     return max(0, int(round(float(value) * 100)))
 
@@ -623,6 +666,13 @@ def _numeric_frequencies(values: Any) -> list[float] | None:
             return None
         frequencies.append(frequency)
     return frequencies
+
+
+def _float_list(values: Any) -> list[float]:
+    result: list[float] = []
+    for value in values:
+        result.append(float(value))
+    return result
 
 
 def _root_strategy_field(root_strategy_raw: dict[str, Any] | None, field_name: str) -> Any:

@@ -17,6 +17,12 @@ ALLOWED_LABEL_INTENTS = {"solver_smoke", "solver_candidate"}
 ALLOWED_SOURCE_TYPES = {"manual_fixture", "ml_snapshot", "pokerth_history", "synthetic"}
 ALLOWED_UNITS = {"chips", "bb"}
 ALLOWED_DECISION_ACTORS = {"hero", "villain", "unknown"}
+ALLOWED_HERO_POSITION_MODELS = {"IP", "OOP", "unknown"}
+ALLOWED_DECISION_CONTEXT_TYPES = {
+    "hero_check_or_bet",
+    "hero_facing_bet",
+    "unknown",
+}
 CARD_RE = re.compile(r"^(?:[2-9TJQKA][hdcs])$", re.IGNORECASE)
 
 
@@ -106,10 +112,36 @@ def _normalize_solver_job(job: Mapping[str, Any]) -> dict[str, Any]:
     if label_intent not in ALLOWED_LABEL_INTENTS:
         raise ValueError(f"unsupported_label_intent:{data['label_intent']}")
     hero_solver_player = _optional_solver_player(data.get("hero_solver_player", 0))
+    if hero_solver_player is None:
+        raise ValueError("hero_solver_player_required")
     decision_actor = str(data.get("decision_actor", "hero"))
     if decision_actor not in ALLOWED_DECISION_ACTORS:
         raise ValueError(f"unsupported_decision_actor:{decision_actor}")
     root_must_be_hero = _bool_value(data.get("root_must_be_hero", True), "root_must_be_hero")
+    villain_solver_player = _solver_player(data.get("villain_solver_player", 1 - hero_solver_player))
+    if villain_solver_player == hero_solver_player:
+        raise ValueError("villain_solver_player_must_differ_from_hero_solver_player")
+
+    hero_position_model = str(data.get("hero_position_model", "unknown"))
+    if hero_position_model not in ALLOWED_HERO_POSITION_MODELS:
+        raise ValueError(f"unsupported_hero_position_model:{hero_position_model}")
+    decision_context_type = str(data.get("decision_context_type", "unknown"))
+    if decision_context_type not in ALLOWED_DECISION_CONTEXT_TYPES:
+        raise ValueError(f"unsupported_decision_context_type:{decision_context_type}")
+
+    initial_hole_cards = _normalize_initial_hole_cards(
+        data.get("initial_hole_cards"),
+        hero_hand=hero_hand,
+        villain_hand=villain_hand,
+        hero_solver_player=hero_solver_player,
+    )
+    initial_contributions = _normalize_initial_contributions(
+        data.get("initial_contributions"),
+        pot=pot,
+        to_call=to_call,
+        hero_solver_player=hero_solver_player,
+        decision_context_type=decision_context_type,
+    )
 
     data.update(
         {
@@ -125,8 +157,13 @@ def _normalize_solver_job(job: Mapping[str, Any]) -> dict[str, Any]:
             "backend": backend,
             "label_intent": label_intent,
             "hero_solver_player": hero_solver_player,
+            "villain_solver_player": villain_solver_player,
             "decision_actor": decision_actor,
             "root_must_be_hero": root_must_be_hero,
+            "hero_position_model": hero_position_model,
+            "decision_context_type": decision_context_type,
+            "initial_hole_cards": initial_hole_cards,
+            "initial_contributions": initial_contributions,
         }
     )
     return data
@@ -212,6 +249,96 @@ def _optional_solver_player(value: Any) -> int | None:
     if number not in (0, 1):
         raise ValueError(f"hero_solver_player_must_be_0_or_1_or_null:{value}")
     return number
+
+
+def _solver_player(value: Any) -> int:
+    if value is None:
+        raise ValueError("solver_player_required")
+    number = int(value)
+    if number not in (0, 1):
+        raise ValueError(f"solver_player_must_be_0_or_1:{value}")
+    return number
+
+
+def _normalize_initial_hole_cards(
+    value: Any,
+    *,
+    hero_hand: list[str],
+    villain_hand: list[str],
+    hero_solver_player: int,
+) -> list[list[str]]:
+    if value is None:
+        if hero_solver_player == 0:
+            return [list(hero_hand), list(villain_hand)]
+        return [list(villain_hand), list(hero_hand)]
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("initial_hole_cards_must_have_two_players")
+    normalized = [
+        _normalize_card_list(player_cards, f"initial_hole_cards[{idx}]", expected_count=2)
+        for idx, player_cards in enumerate(value)
+    ]
+    expected_hero_slot = normalized[hero_solver_player]
+    if expected_hero_slot != hero_hand:
+        raise ValueError("initial_hole_cards_hero_slot_mismatch")
+    expected_villain_slot = normalized[1 - hero_solver_player]
+    if expected_villain_slot != villain_hand:
+        raise ValueError("initial_hole_cards_villain_slot_mismatch")
+    return normalized
+
+
+def _normalize_initial_contributions(
+    value: Any,
+    *,
+    pot: float,
+    to_call: float,
+    hero_solver_player: int,
+    decision_context_type: str,
+) -> list[float]:
+    if value is None:
+        return _derive_initial_contributions(
+            pot=pot,
+            to_call=to_call,
+            hero_solver_player=hero_solver_player,
+            decision_context_type=decision_context_type,
+        )
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("initial_contributions_must_have_two_players")
+    contributions = [float(value[0]), float(value[1])]
+    if contributions[0] < 0 or contributions[1] < 0:
+        raise ValueError("initial_contributions_must_be_nonnegative")
+    if abs(sum(contributions) - pot) > 1e-6:
+        raise ValueError("initial_contributions_must_sum_to_pot")
+    return contributions
+
+
+def _derive_initial_contributions(
+    *,
+    pot: float,
+    to_call: float,
+    hero_solver_player: int,
+    decision_context_type: str,
+) -> list[float]:
+    if decision_context_type == "hero_check_or_bet":
+        if to_call != 0:
+            raise ValueError("hero_check_or_bet_requires_zero_to_call")
+        left = pot / 2.0
+        return [left, pot - left]
+    if decision_context_type == "hero_facing_bet":
+        if to_call <= 0:
+            raise ValueError("hero_facing_bet_requires_positive_to_call")
+        if pot < to_call:
+            raise ValueError("pot_must_cover_to_call")
+        lower = (pot - to_call) / 2.0
+        higher = lower + to_call
+        if hero_solver_player == 0:
+            return [lower, higher]
+        return [higher, lower]
+    if to_call <= 0:
+        left = pot / 2.0
+        return [left, pot - left]
+    lower = (pot - to_call) / 2.0
+    higher = lower + to_call
+    return [lower, higher]
 
 
 def _bool_value(value: Any, field_name: str) -> bool:

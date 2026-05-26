@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from solvers.poker_solver_adapter import solve_tiny_postflop_spot
+from solver_jobs.hero_oriented_builder import validate_hero_root_alignment
 from solver_jobs.job_schema import validate_solver_job
 
 
@@ -30,6 +31,24 @@ def run_solver_job(job: dict[str, Any]) -> dict[str, Any]:
             )
 
         normalized_job = validation["job"]
+        root_validation = validate_hero_root_alignment(normalized_job)
+        if root_validation["status"] != "ok":
+            return _runner_result(
+                started,
+                normalized_job["solver_job_id"],
+                normalized_job,
+                {
+                    "root_player": root_validation.get("root_player"),
+                    "hero_solver_player": root_validation.get("hero_solver_player"),
+                    "root_matches_hero": root_validation.get("root_matches_hero"),
+                    "root_player_role": root_validation.get("root_player_role"),
+                    "legal_action_ids": root_validation.get("legal_action_ids", []),
+                    "legal_action_labels": root_validation.get("legal_action_labels", []),
+                },
+                root_validation.get("error") or "root_validation_failed",
+                _quality(normalized_job["iterations"], None, "root_validation_failed"),
+            )
+
         adapter_result = solve_tiny_postflop_spot(
             normalized_job["hero_hand"],
             normalized_job["villain_hand"],
@@ -41,6 +60,11 @@ def run_solver_job(job: dict[str, Any]) -> dict[str, Any]:
             iterations=normalized_job["iterations"],
             backend=normalized_job["backend"],
             timeout_s=normalized_job["timeout_s"],
+            hero_solver_player=normalized_job["hero_solver_player"],
+            decision_actor=normalized_job["decision_actor"],
+            root_must_be_hero=normalized_job["root_must_be_hero"],
+            initial_hole_cards=normalized_job["initial_hole_cards"],
+            initial_contributions=normalized_job["initial_contributions"],
         )
 
         output = adapter_result.get("output")

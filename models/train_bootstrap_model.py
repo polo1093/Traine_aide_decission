@@ -21,31 +21,57 @@ from sklearn.pipeline import Pipeline
 
 
 NUMERIC_FEATURES = (
-    "pot",
-    "to_call",
-    "stack",
-    "spr",
-    "dominant_action_frequency",
-    "iterations",
-    "exploitability_last",
-    "board_card_count",
-    "is_river",
-    "is_turn",
-    "is_check_or_bet_context",
-    "is_facing_bet_context",
-    "to_call_ratio",
-    "stack_to_pot_ratio",
+    "features.pot",
+    "features.to_call",
+    "features.to_call_pot_ratio",
+    "features.equity_table",
+    "features.equity_1v1",
+    "features.equity_known",
+    "features.equity_required",
+    "features.equity_gap",
+    "features.ev",
+    "features.call_max",
+    "features.player_start",
+    "features.player_active",
+    "features.active_opponents",
+    "features.board_card_count",
+    "features.hero_cards_known",
+    "features.opponent_looseness_avg",
+    "features.opponent_aggression_avg",
+    "features.opponent_confidence_avg",
+    "features.hero_stack",
+    "features.effective_stack",
+    "features.stack_to_pot_ratio",
+    "features.has_check",
+    "features.has_call",
+    "features.has_raise",
 )
 CATEGORICAL_FEATURES = (
-    "street",
-    "position_model",
-    "decision_context_type",
-    "label_source",
-    "label_quality",
-    "candidate_confidence",
+    "metadata.street",
+    "features.hero_position",
 )
-CARD_FEATURES = ("hero_cards", "villain_hand", "board_cards")
+CARD_FEATURES: tuple[str, ...] = ()
 FEATURE_COLUMNS = NUMERIC_FEATURES + CATEGORICAL_FEATURES + CARD_FEATURES
+FEATURE_ALIASES = {
+    "metadata.street": ("street",),
+    "features.hero_position": ("hero_position", "position_model"),
+    "features.pot": ("pot",),
+    "features.to_call": ("to_call",),
+    "features.to_call_pot_ratio": ("to_call_pot_ratio", "to_call_ratio"),
+    "features.equity_table": ("equity_table",),
+    "features.equity_1v1": ("equity_1v1",),
+    "features.equity_known": ("equity_known",),
+    "features.ev": ("ev",),
+    "features.call_max": ("call_max",),
+    "features.board_card_count": ("board_card_count",),
+    "features.player_start": ("player_start",),
+    "features.player_active": ("player_active",),
+    "features.hero_stack": ("stack",),
+    "features.effective_stack": ("stack",),
+    "features.has_check": ("has_check", "is_check_or_bet_context"),
+    "features.has_call": ("has_call",),
+    "features.has_raise": ("has_raise",),
+}
 ALLOWED_MODEL_TYPES = {"auto", "logistic_regression", "random_forest", "extra_trees", "dummy"}
 TRAINING_QUALITY = "pipeline_smoke_only"
 WEAK_RULE_LABEL_SOURCE = "weak_rule_bootstrap"
@@ -66,9 +92,14 @@ def train_bootstrap_model(
     model_type: str,
     min_rows: int = 50,
     random_seed: int = RANDOM_STATE,
+    feature_columns: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     if model_type not in ALLOWED_MODEL_TYPES:
         raise BootstrapTrainingError(f"unsupported_model_type:{model_type}")
+    selected_features = tuple(feature_columns or FEATURE_COLUMNS)
+    unknown_features = [feature for feature in selected_features if feature not in FEATURE_COLUMNS]
+    if unknown_features:
+        raise BootstrapTrainingError(f"unknown_feature_column:{unknown_features[0]}")
 
     rows, fieldnames = load_candidate_csv(input_path)
     validate_schema(fieldnames)
@@ -83,7 +114,7 @@ def train_bootstrap_model(
     labels = sorted({str(row["bootstrap_label"]) for row in train_rows})
     candidates = candidate_model_names(model_type)
     comparisons = {
-        name: train_and_evaluate_model(name, train_split, test_split, labels)
+        name: train_and_evaluate_model(name, train_split, test_split, labels, feature_columns=selected_features)
         for name in candidates
     }
     best_model_name = select_best_model(comparisons, requested_model_type=model_type)
@@ -92,7 +123,7 @@ def train_bootstrap_model(
     if best["macro_f1"] <= dummy["macro_f1"] + 0.02:
         warnings.append("best_model_does_not_clearly_beat_dummy")
 
-    contains_weak_rule_labels = any(row.get("label_source") == WEAK_RULE_LABEL_SOURCE for row in train_rows)
+    contains_weak_rule_labels = any(_label_source(row) == WEAK_RULE_LABEL_SOURCE for row in train_rows)
     report = {
         "status": "ok",
         "requested_model_type": model_type,
@@ -113,6 +144,7 @@ def train_bootstrap_model(
         "train_label_distribution": dict(sorted(Counter(row["bootstrap_label"] for row in train_split).items())),
         "test_label_distribution": dict(sorted(Counter(row["bootstrap_label"] for row in test_split).items())),
         "warnings": sorted(set(warnings)),
+        "model_feature_columns": list(selected_features),
         "model_comparison": comparisons,
         "dummy_comparison": dummy,
         "accuracy": best["accuracy"],
@@ -122,7 +154,7 @@ def train_bootstrap_model(
         "classification_report": best["classification_report"],
     }
 
-    feature_schema = build_feature_schema(train_rows, labels)
+    feature_schema = build_feature_schema(train_rows, labels, feature_columns=selected_features)
     label_mapping = build_label_mapping(labels)
     paths = write_training_outputs(
         output_dir=output_dir,
@@ -146,7 +178,7 @@ def load_candidate_csv(input_path: str | Path) -> tuple[list[dict[str, Any]], li
 def normalize_csv_row(row: Mapping[str, Any]) -> dict[str, Any]:
     normalized = dict(row)
     for feature in NUMERIC_FEATURES:
-        normalized[feature] = _float_or_none(normalized.get(feature))
+        normalized[feature] = _float_or_none(_feature_value(normalized, feature))
     normalized["excluded"] = _bool(normalized.get("excluded"))
     normalized["bootstrap_label"] = _text(normalized.get("bootstrap_label"))
     return normalized
@@ -193,15 +225,15 @@ def build_reliability_warnings(all_rows: Sequence[Mapping[str, Any]], train_rows
         warnings.append("dataset_has_less_than_3_classes")
     if "CALL" not in labels:
         warnings.append("call_class_absent")
-    if any(row.get("label_source") == WEAK_RULE_LABEL_SOURCE for row in train_rows):
+    if any(_label_source(row) == WEAK_RULE_LABEL_SOURCE for row in train_rows):
         warnings.extend(["contains_weak_rule_labels", "model_may_learn_synthetic_rules", "metrics_may_be_artificial_due_to_weak_rules"])
-    if any(row.get("label_quality") == WEAK_RULE_LABEL_QUALITY for row in train_rows):
+    if any(_label_quality(row) == WEAK_RULE_LABEL_QUALITY for row in train_rows):
         warnings.append("label_quality_bootstrap_weak_rule_untrusted")
-    if any(row.get("label_quality") == SOLVER_LABEL_QUALITY for row in train_rows):
+    if any(_label_quality(row) == SOLVER_LABEL_QUALITY for row in train_rows):
         warnings.append("label_quality_bootstrap_solver_untrusted")
-    if any(_is_nullish(row.get("hero_cards")) for row in train_rows):
+    if any(_is_nullish(_feature_value(row, "features.hero_cards")) for row in train_rows):
         warnings.append("hero_cards_missing_or_null")
-    if any(_is_nullish(row.get("board_cards")) for row in train_rows):
+    if any(_is_nullish(_feature_value(row, "features.board_cards")) for row in train_rows):
         warnings.append("board_cards_missing_or_null")
     if "ALL_IN" not in {_text(row.get("bootstrap_label")) for row in all_rows if _text(row.get("bootstrap_label"))}:
         warnings.append("all_in_absent_because_excluded")
@@ -231,11 +263,18 @@ def candidate_model_names(model_type: str) -> list[str]:
     return ["dummy", model_type]
 
 
-def train_and_evaluate_model(name: str, train_rows: Sequence[Mapping[str, Any]], test_rows: Sequence[Mapping[str, Any]], labels: list[str]) -> dict[str, Any]:
+def train_and_evaluate_model(
+    name: str,
+    train_rows: Sequence[Mapping[str, Any]],
+    test_rows: Sequence[Mapping[str, Any]],
+    labels: list[str],
+    *,
+    feature_columns: Sequence[str] = FEATURE_COLUMNS,
+) -> dict[str, Any]:
     model = make_model(name)
-    x_train = [feature_payload(row) for row in train_rows]
+    x_train = [feature_payload(row, feature_columns=feature_columns) for row in train_rows]
     y_train = [str(row["bootstrap_label"]) for row in train_rows]
-    x_test = [feature_payload(row) for row in test_rows]
+    x_test = [feature_payload(row, feature_columns=feature_columns) for row in test_rows]
     y_test = [str(row["bootstrap_label"]) for row in test_rows]
     model.fit(x_train, y_train)
     predictions = [str(value) for value in model.predict(x_test)]
@@ -273,11 +312,17 @@ def select_best_model(comparisons: Mapping[str, Mapping[str, Any]], *, requested
     return max(non_dummy.items(), key=lambda item: (item[1]["macro_f1"], item[1]["weighted_f1"], item[1]["accuracy"]))[0]
 
 
-def feature_payload(row: Mapping[str, Any]) -> dict[str, Any]:
-    payload: dict[str, Any] = {feature: _float_or_zero(row.get(feature)) for feature in NUMERIC_FEATURES}
-    payload.update({feature: _text(row.get(feature)) or "UNKNOWN" for feature in CATEGORICAL_FEATURES})
-    for feature in CARD_FEATURES:
-        payload[feature] = _canonical_text(row.get(feature)) or "UNKNOWN"
+def feature_payload(row: Mapping[str, Any], *, feature_columns: Sequence[str] = FEATURE_COLUMNS) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for feature in feature_columns:
+        if feature in NUMERIC_FEATURES:
+            payload[feature] = _float_or_zero(_feature_value(row, feature))
+        elif feature in CATEGORICAL_FEATURES:
+            payload[feature] = _text(_feature_value(row, feature)) or "UNKNOWN"
+        elif feature in CARD_FEATURES:
+            payload[feature] = _canonical_text(_feature_value(row, feature)) or "UNKNOWN"
+        else:
+            raise BootstrapTrainingError(f"unknown_feature_column:{feature}")
     return payload
 
 
@@ -289,20 +334,29 @@ def matrix_as_dict(truth: Sequence[str], predictions: Sequence[str], labels: Seq
     }
 
 
-def build_feature_schema(rows: Sequence[Mapping[str, Any]], labels: list[str]) -> dict[str, Any]:
+def build_feature_schema(
+    rows: Sequence[Mapping[str, Any]],
+    labels: list[str],
+    *,
+    feature_columns: Sequence[str] = FEATURE_COLUMNS,
+) -> dict[str, Any]:
+    numeric_features = [feature for feature in feature_columns if feature in NUMERIC_FEATURES]
+    categorical_features = [feature for feature in feature_columns if feature in CATEGORICAL_FEATURES]
+    card_features = [feature for feature in feature_columns if feature in CARD_FEATURES]
     categorical_values = {
-        feature: sorted({_text(row.get(feature)) or "UNKNOWN" for row in rows})
-        for feature in CATEGORICAL_FEATURES
+        feature: sorted({_text(_feature_value(row, feature)) or "UNKNOWN" for row in rows})
+        for feature in categorical_features
     }
     card_presence = {
-        feature: sum(0 if _is_nullish(row.get(feature)) else 1 for row in rows)
-        for feature in CARD_FEATURES
+        feature: sum(0 if _is_nullish(_feature_value(row, feature)) else 1 for row in rows)
+        for feature in card_features
     }
     return {
         "training_quality": TRAINING_QUALITY,
-        "numeric_features": list(NUMERIC_FEATURES),
-        "categorical_features": list(CATEGORICAL_FEATURES),
-        "card_features": list(CARD_FEATURES),
+        "feature_order": list(feature_columns),
+        "numeric_features": numeric_features,
+        "categorical_features": categorical_features,
+        "card_features": card_features,
         "categorical_values": categorical_values,
         "card_presence_counts": card_presence,
         "target": "bootstrap_label",
@@ -363,6 +417,84 @@ def without_model_objects(report: Mapping[str, Any]) -> dict[str, Any]:
 
 def write_json(payload: Mapping[str, Any], output_path: str | Path) -> None:
     Path(output_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _feature_value(row: Mapping[str, Any], feature: str) -> Any:
+    derived = _derived_feature_value(row, feature)
+    if derived is not None:
+        return derived
+    if feature in row:
+        return row.get(feature)
+    for alias in FEATURE_ALIASES.get(feature, ()):
+        if alias in row:
+            return row.get(alias)
+    return None
+
+
+def _derived_feature_value(row: Mapping[str, Any], feature: str) -> Any:
+    if feature == "features.active_opponents":
+        active = _float_or_none(_raw_feature_value(row, "features.player_active"))
+        return None if active is None else max(0.0, active - 1.0)
+    if feature == "features.hero_cards_known":
+        raw = _raw_feature_value(row, "features.hero_cards") or row.get("hero_cards")
+        return 0.0 if _is_nullish(raw) else 1.0
+    if feature == "features.equity_gap":
+        equity = _float_or_none(_raw_feature_value(row, "features.equity_table"))
+        if equity is None:
+            equity = _float_or_none(_raw_feature_value(row, "features.equity_1v1"))
+        required = _float_or_none(_raw_feature_value(row, "features.equity_required"))
+        if equity is None or required is None:
+            return None
+        return equity - required
+    if feature == "features.stack_to_pot_ratio":
+        stack = _float_or_none(_raw_feature_value(row, "features.effective_stack"))
+        if stack is None:
+            stack = _float_or_none(_raw_feature_value(row, "features.hero_stack"))
+        if stack is None:
+            stack = _float_or_none(row.get("stack"))
+        pot = _float_or_none(_raw_feature_value(row, "features.pot"))
+        if stack is None or pot is None or pot <= 0:
+            return None
+        return stack / pot
+    if feature.startswith("features.opponent_") and feature.endswith("_avg"):
+        metric = feature.removeprefix("features.opponent_").removesuffix("_avg")
+        return _opponent_profile_average(row, metric)
+    if feature in {"features.hero_stack", "features.effective_stack"}:
+        return row.get(feature) or row.get("stack")
+    return None
+
+
+def _raw_feature_value(row: Mapping[str, Any], feature: str) -> Any:
+    if feature in row:
+        return row.get(feature)
+    for alias in FEATURE_ALIASES.get(feature, ()):
+        if alias in row:
+            return row.get(alias)
+    return None
+
+
+def _opponent_profile_average(row: Mapping[str, Any], metric: str) -> float | None:
+    raw = row.get("features.opponent_profiles") or row.get("opponent_profiles")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(raw, list):
+        return None
+    values = [_float_or_none(item.get(metric)) for item in raw if isinstance(item, Mapping)]
+    numbers = [value for value in values if value is not None]
+    if not numbers:
+        return None
+    return sum(numbers) / len(numbers)
+
+
+def _label_source(row: Mapping[str, Any]) -> str | None:
+    return _text(row.get("label_source") or row.get("audit.label_source") or row.get("metadata.label_source"))
+
+
+def _label_quality(row: Mapping[str, Any]) -> str | None:
+    return _text(row.get("label_quality") or row.get("audit.label_quality"))
 
 
 def render_markdown_report(report: Mapping[str, Any]) -> str:
@@ -431,7 +563,7 @@ def render_model_card(report: Mapping[str, Any], feature_schema: Mapping[str, An
             "- Weak-rule rows can create synthetic distribution bias.",
             "- Metrics can be artificially high when the model learns generated rules.",
             "- CALL may be absent in the current dataset.",
-            "- Card features are partial and should not be treated as a complete hand representation.",
+            "- Raw card and board strings are audit data only; model inputs use equity/context summaries.",
             "",
             "## Next Steps",
             "",
@@ -445,6 +577,14 @@ def render_model_card(report: Mapping[str, Any], feature_schema: Mapping[str, An
 
 
 def _float_or_none(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes"}:
+            return 1.0
+        if lowered in {"false", "no"}:
+            return 0.0
     try:
         return None if value in (None, "") else float(value)
     except (TypeError, ValueError):

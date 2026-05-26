@@ -151,7 +151,7 @@ def test_unknown_category_is_warned_but_handled(tmp_path: Path) -> None:
     result = predict_bootstrap_model(model_dir=model_dir, input_payload=payload)
 
     assert result["status"] == "ok"
-    assert any(warning.startswith("unknown_category:position_model:BTN") for warning in result["warnings"])
+    assert any(warning.startswith("unknown_category:features.hero_position:BTN") for warning in result["warnings"])
 
 
 def test_missing_model_returns_clean_error(tmp_path: Path) -> None:

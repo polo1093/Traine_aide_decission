@@ -96,6 +96,20 @@ def test_low_frequency_is_excluded() -> None:
     assert row["exclusion_reason"] == "dominant_action_too_weak"
 
 
+def test_min_frequency_can_be_configured() -> None:
+    row = build_candidate_dataset_rows(stable_pair(action="CALL", frequency=0.69), min_dominant_frequency=0.65)[0]
+
+    assert row["excluded"] is False
+    assert row["bootstrap_label"] == "CALL"
+
+
+def test_non_average_strategy_source_flag_is_excluded() -> None:
+    row = first_row(stable_pair(action="CALL", frequency=0.9, danger_flags=["strategy_source_not_average_strategy"]))
+
+    assert row["excluded"] is True
+    assert row["exclusion_reason"] == "danger_flag:strategy_source_not_average_strategy"
+
+
 def test_timeout_is_excluded_before_solver_failed() -> None:
     row = first_row(stable_pair(solver_status="failed", error="subprocess timeout after 5s"))
 
@@ -216,3 +230,34 @@ def test_weak_rule_fixture_has_check_fold_raise() -> None:
     assert labels["CHECK"] >= 4
     assert labels["FOLD"] >= 4
     assert labels["RAISE"] >= 4
+
+
+def test_weak_rules_can_balance_to_largest_existing_class() -> None:
+    records = []
+    for index in range(5):
+        scenario = f"fold_group_{index}"
+        records.append(
+            sensitivity_record(
+                source_id=f"{scenario}_it25",
+                scenario=scenario,
+                action="FOLD",
+                frequency=0.9,
+                iterations=25,
+            )
+        )
+        records.append(
+            sensitivity_record(
+                source_id=f"{scenario}_it50",
+                scenario=scenario,
+                action="FOLD",
+                frequency=0.9,
+                iterations=50,
+            )
+        )
+    rows = build_candidate_dataset_rows(records)
+    from datasets.export_candidate_dataset import generate_weak_rule_rows
+
+    rows.extend(generate_weak_rule_rows(rows, min_usable_rows=6, class_floor=1, balance_classes=True))
+    labels = Counter(row["bootstrap_label"] for row in rows if not row["excluded"])
+
+    assert labels["CHECK"] == labels["FOLD"] == labels["RAISE"]

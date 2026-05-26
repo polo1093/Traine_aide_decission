@@ -15,10 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from models.train_bootstrap_model import CATEGORICAL_FEATURES, CARD_FEATURES, NUMERIC_FEATURES, feature_payload
+from models.train_bootstrap_model import CATEGORICAL_FEATURES, CARD_FEATURES, FEATURE_ALIASES, NUMERIC_FEATURES, feature_payload
 
 
-REQUIRED_NUMERIC_FEATURES = ("pot", "to_call", "stack", "spr", "dominant_action_frequency", "iterations")
+REQUIRED_NUMERIC_FEATURES = ("features.pot", "features.to_call")
 
 
 class BootstrapPredictionError(ValueError):
@@ -35,7 +35,8 @@ def predict_bootstrap_model(
         model, feature_schema, label_mapping = load_prediction_artifacts(model_dir)
         validate_input(input_payload, feature_schema)
         warnings = prediction_warnings(input_payload, feature_schema)
-        features = feature_payload(input_payload)
+        feature_order = feature_schema.get("feature_order") or feature_schema.get("numeric_features", []) + feature_schema.get("categorical_features", []) + feature_schema.get("card_features", [])
+        features = feature_payload(input_payload, feature_columns=feature_order)
         prediction = str(model.predict([features])[0])
         labels = set(label_mapping.get("labels", []))
         if prediction not in labels:
@@ -74,26 +75,43 @@ def load_prediction_artifacts(model_dir: str | Path) -> tuple[Any, dict[str, Any
 
 def validate_input(payload: Mapping[str, Any], feature_schema: Mapping[str, Any]) -> None:
     required = list(REQUIRED_NUMERIC_FEATURES) + list(feature_schema.get("categorical_features", CATEGORICAL_FEATURES))
-    missing = [field for field in required if field not in payload]
+    missing = [field for field in required if not _has_feature(payload, field)]
     if missing:
-        raise BootstrapPredictionError(f"missing_field:{missing[0]}")
+        raise BootstrapPredictionError(f"missing_field:{_display_field(missing[0])}")
 
 
 def prediction_warnings(payload: Mapping[str, Any], feature_schema: Mapping[str, Any]) -> list[str]:
     warnings: list[str] = []
     known_values = feature_schema.get("categorical_values", {})
-    for field in CATEGORICAL_FEATURES:
-        value = str(payload.get(field, "UNKNOWN"))
+    for field in feature_schema.get("categorical_features", CATEGORICAL_FEATURES):
+        value = str(_payload_value(payload, field) or "UNKNOWN")
         allowed = set(known_values.get(field, []))
         if allowed and value not in allowed:
             warnings.append(f"unknown_category:{field}:{value}")
-    for field in NUMERIC_FEATURES:
-        if field not in payload and field not in REQUIRED_NUMERIC_FEATURES:
+    for field in feature_schema.get("numeric_features", NUMERIC_FEATURES):
+        if not _has_feature(payload, field) and field not in REQUIRED_NUMERIC_FEATURES:
             warnings.append(f"optional_numeric_field_missing:{field}")
-    for field in CARD_FEATURES:
-        if field not in payload:
+    for field in feature_schema.get("card_features", CARD_FEATURES):
+        if not _has_feature(payload, field):
             warnings.append(f"optional_card_field_missing:{field}")
     return warnings
+
+
+def _has_feature(payload: Mapping[str, Any], field: str) -> bool:
+    return field in payload or any(alias in payload for alias in FEATURE_ALIASES.get(field, ()))
+
+
+def _payload_value(payload: Mapping[str, Any], field: str) -> Any:
+    if field in payload:
+        return payload.get(field)
+    for alias in FEATURE_ALIASES.get(field, ()):
+        if alias in payload:
+            return payload.get(alias)
+    return None
+
+
+def _display_field(field: str) -> str:
+    return FEATURE_ALIASES.get(field, (field,))[0]
 
 
 def predict_probabilities(model: Any, features: Mapping[str, Any]) -> dict[str, float] | None:

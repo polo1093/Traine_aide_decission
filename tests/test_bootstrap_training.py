@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from models import train_bootstrap_model as training_module
-from models.train_bootstrap_model import BootstrapTrainingError, train_bootstrap_model
+from models.train_bootstrap_model import BootstrapTrainingError, FEATURE_COLUMNS, train_bootstrap_model
 
 
 FIELDNAMES = [
@@ -228,3 +228,19 @@ def test_training_module_does_not_import_solver_or_aide_decision() -> None:
     assert "PokerSolver" not in source
     assert "poker_solver" not in source
     assert "aide_decision" not in source
+
+
+def test_model_features_are_dist_aligned_and_exclude_audit_leakage() -> None:
+    assert "features.pot" in FEATURE_COLUMNS
+    assert "metadata.street" in FEATURE_COLUMNS
+
+    forbidden = {
+        "label_source",
+        "label_quality",
+        "dominant_action_frequency",
+        "iterations",
+        "exploitability_last",
+        "candidate_confidence",
+        "villain_hand",
+    }
+    assert not (set(FEATURE_COLUMNS) & forbidden)

@@ -1,6 +1,62 @@
 ````md
 # Traine_aide_decission
 
+## Direction ML actuelle
+
+La direction ML active est de partir de PokerBench comme source principale de labels oracle/solver, puis d'entrainer et comparer des modeles offline avant toute integration live.
+
+Pipeline de reference :
+
+```text
+PokerBench oracle
+-> features normalisees
+-> modele offline
+-> etude graphique
+-> prediction offline
+```
+
+Baselines et experiences :
+
+* `pokerbench_oracle_baseline_v1` reste la baseline principale 4 classes : `CHECK / FOLD / CALL / RAISE`.
+* `pokerbench_oracle_3intent_v1` est l'experimentation prioritaire : `NO_INVEST / CALL / RAISE`.
+* `live_bb_baseline_v1` est conservee comme archive historique seulement, pas comme meilleur modele.
+
+Mapping 3 intentions :
+
+```text
+CHECK -> NO_INVEST
+FOLD  -> NO_INVEST
+CALL  -> CALL
+RAISE -> RAISE
+```
+
+Resolution finale :
+
+```text
+NO_INVEST + check possible   -> CHECK
+NO_INVEST + check impossible -> FOLD
+```
+
+Lancer la baseline PokerBench 4 classes :
+
+```powershell
+python experiments/pokerbench_oracle_baseline_v1.py
+```
+
+Lancer l'experience PokerBench 3 intentions :
+
+```powershell
+python experiments/pokerbench_oracle_3intent_v1.py
+```
+
+Garde-fous :
+
+* aucun modele n'est branche automatiquement au bot live ;
+* les logs live ne sont pas une verite d'entrainement ;
+* les colonnes label/debug/audit/raw text ne doivent pas entrer dans `X_train` ;
+* les scores issus de resampling ne sont pas compares directement aux scores oracle ;
+* les anciens pipelines restent disponibles en archive, pas en reference principale.
+
 Projet expérimental offline pour générer, filtrer et résoudre des spots de poker avec PokerSolver, afin de préparer plus tard un dataset ML exploitable par un modèle de décision.
 
 Le projet est séparé du projet live `aide_decision`.

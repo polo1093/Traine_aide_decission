@@ -147,7 +147,8 @@ def test_launch_notebook_is_clean_and_pokerbench_centered() -> None:
     assert "RUN_GRAPHICAL_STUDY" in source
     assert "FAST_MODE" in source
     assert "FORCE_REBUILD" in source
-    assert "v3" not in source.lower()
-    assert "v4" not in source.lower()
+    assert "gtow_llama_sft_v3" in source
+    assert "bootstrap_candidate_dataset_v3" not in source.lower()
+    assert "bootstrap_candidate_dataset_v4" not in source.lower()
     assert all(cell.get("execution_count") is None for cell in notebook["cells"] if cell.get("cell_type") == "code")
     assert sum(len(cell.get("outputs", [])) for cell in notebook["cells"]) == 0

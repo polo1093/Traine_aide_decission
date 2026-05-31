@@ -2,3 +2,10 @@ psutil
 pytest
 joblib
 scikit-learn
+pandas
+ipykernel
+notebook
+nbformat
+nbclient
+pyarrow
+matplotlib

@@ -15,13 +15,21 @@ if str(ROOT) not in sys.path:
 
 from datasets.external_oracle_sources.hf_gtow_llama_sft_v3 import export_gtow_llama_sft_v3  # noqa: E402
 from datasets.external_oracle_sources.hf_poker_gto_100k import export_poker_gto_100k  # noqa: E402
-from datasets.external_oracle_sources.phh_acpc_scaffold import write_phh_scaffold  # noqa: E402
+from datasets.external_oracle_sources.phh_acpc_scaffold import (  # noqa: E402
+    PHH_SOURCE_PROFILES,
+    export_phh_behavioral_dataset,
+    write_phh_scaffold,
+)
 
 
 DEFAULT_OUTPUTS = {
     "poker_gto_100k": "outputs/readiness/poker_gto_100k_oracle_v1",
     "gtow_llama_sft_v3": "outputs/readiness/gtow_llama_sft_v3_oracle_v1",
     "phh_acpc_scaffold": "outputs/readiness/phh_acpc_scaffold_v1",
+    "phh_handhq_nlhe": "outputs/readiness/phh_handhq_nlhe_behavioral_v1",
+    "phh_pluribus": "outputs/readiness/phh_pluribus_behavioral_v1",
+    "phh_wsop_tv": "outputs/readiness/phh_wsop_tv_behavioral_v1",
+    "acpc_public_logs": "outputs/readiness/acpc_public_logs_behavioral_v1",
 }
 
 
@@ -29,6 +37,7 @@ def export_external_oracle_dataset(
     *,
     source: str,
     output_dir: str | Path | None = None,
+    input_path: str | Path | None = None,
     sample_size: int | None = None,
     no_download: bool = False,
     force: bool = False,
@@ -53,6 +62,14 @@ def export_external_oracle_dataset(
         )
     if source == "phh_acpc_scaffold":
         return write_phh_scaffold(output_dir=target_dir, force=force)
+    if source in PHH_SOURCE_PROFILES:
+        return export_phh_behavioral_dataset(
+            source=source,
+            output_dir=target_dir,
+            input_path=input_path,
+            sample_size=sample_size,
+            force=force,
+        )
     raise ValueError(f"unsupported_source:{source}")
 
 
@@ -61,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source", choices=sorted(DEFAULT_OUTPUTS), required=True)
     parser.add_argument("--sample-size", type=int, default=None)
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--input-path", default=None, help="Local .phh/.phhs file or directory for PHH/ACPC behavioral sources.")
     parser.add_argument("--no-download", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--label-mode", choices=["3intent"], default="3intent")
@@ -73,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         report = export_external_oracle_dataset(
             source=args.source,
             output_dir=args.output_dir,
+            input_path=args.input_path,
             sample_size=args.sample_size,
             no_download=args.no_download,
             force=args.force,

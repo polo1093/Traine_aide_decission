@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import importlib.util
 import json
 import random
@@ -36,7 +35,6 @@ from synthetic.deck import draw_cards
 
 DEFAULT_INPUT = Path("dist/ml_dataset_export_v2/training_dataset.jsonl")
 DEFAULT_OUTPUT_DIR = Path("outputs/readiness/live_bb_baseline_v1")
-HISTORICAL_V5_4000_MODEL = Path("outputs/readiness/bootstrap_model_v5_4000/model.joblib")
 ALLOWED_LABELS = ("CHECK", "FOLD", "CALL", "RAISE")
 LABEL_ALIASES = {"COL": "CALL", "CALL": "CALL", "RES": "RAISE", "BET": "RAISE", "MISE": "RAISE", "RELANCE": "RAISE"}
 NUMERIC_FEATURES = (
@@ -97,7 +95,6 @@ def run_live_bb_baseline_v1(
 ) -> dict[str, Any]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    historical_hash_before = file_sha256(HISTORICAL_V5_4000_MODEL)
 
     source_rows = load_jsonl(Path(input_jsonl))
     rebuilder = load_feature_rebuilder(Path(input_jsonl).parent / "feature_rebuilder.py")
@@ -129,10 +126,7 @@ def run_live_bb_baseline_v1(
     training = train_model(candidates, output_path=output_path, random_seed=random_seed)
     diagnostics = write_diagnostics(candidates, output_path=output_path, model_type=training["model_type"], random_seed=random_seed)
     prediction = predict_first_imported_line(model_dir=output_path, rows=candidates)
-    comparison = build_comparison_with_v5_4000(training, historical_model_hash_before=historical_hash_before)
-    (output_path / "comparison_with_v5_4000.md").write_text(comparison, encoding="utf-8")
 
-    historical_hash_after = file_sha256(HISTORICAL_V5_4000_MODEL)
     source_unique = source_snapshot_id_unique_count(candidates)
     inflation_ratio = round(len(candidates) / source_unique, 6) if source_unique else 0.0
     imported_rows = count_generation_method(candidates, "real_imported")
@@ -189,9 +183,6 @@ def run_live_bb_baseline_v1(
         "warnings": warnings,
         "diagnostics": diagnostics,
         "call_diagnostic": call_diagnostic(training),
-        "historical_v5_4000_overwritten": historical_hash_before != historical_hash_after,
-        "historical_v5_4000_hash_before": historical_hash_before,
-        "historical_v5_4000_hash_after": historical_hash_after,
         "offline_imported_prediction": prediction,
         "bot_live_connection": "not_modified",
         "not_for_production": True,
@@ -1437,24 +1428,6 @@ def build_preprocessing_schema(rows: Sequence[Mapping[str, Any]]) -> dict[str, A
     }
 
 
-def build_comparison_with_v5_4000(training: Mapping[str, Any], *, historical_model_hash_before: str | None) -> str:
-    historical_report = read_json(Path("outputs/readiness/bootstrap_model_v5_4000/training_report_v5.json"))
-    lines = [
-        "# live_bb_baseline_v1 vs historical v5_4000",
-        "",
-        "| model | classes | accuracy | macro F1 | feature count |",
-        "|---|---|---:|---:|---:|",
-        f"| live_bb_baseline_v1 | CHECK/FOLD/CALL/RAISE | {training['accuracy']} | {training['macro_f1']} | {len(FEATURE_COLUMNS)} |",
-        f"| historical_v5_4000 | CHECK/FOLD/RAISE | {historical_report.get('accuracy')} | {historical_report.get('macro_f1')} | {len(historical_report.get('model_feature_columns', []))} |",
-        "",
-        f"- historical_v5_4000_overwritten: `{historical_model_hash_before != file_sha256(HISTORICAL_V5_4000_MODEL)}`",
-        "- CALL is native in live_bb_baseline_v1.",
-        "- The historical v5_4000 model remains a baseline only.",
-        "",
-    ]
-    return "\n".join(lines)
-
-
 def call_diagnostic(training: Mapping[str, Any]) -> dict[str, Any]:
     report = training["classification_report"].get("CALL", {})
     recall = float(report.get("recall") or 0.0)
@@ -1517,16 +1490,6 @@ def json_safe(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
     return value
-
-
-def file_sha256(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def read_json(path: Path) -> dict[str, Any]:

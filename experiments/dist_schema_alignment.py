@@ -20,9 +20,9 @@ from models.train_bootstrap_model import FEATURE_COLUMNS
 
 
 DEFAULT_DIST_DIR = Path("dist/ml_dataset_export")
-DEFAULT_CURRENT_CSV = Path("outputs/readiness/bootstrap_candidate_dataset_v4/candidates.csv")
+DEFAULT_CURRENT_CSV = Path("outputs/readiness/bootstrap_candidate_dataset_solver/candidates.csv")
 DEFAULT_V5_CSV = Path("outputs/readiness/bootstrap_candidate_dataset_v5/candidates.csv")
-DEFAULT_REPORT = Path("outputs/readiness/bootstrap_candidate_dataset_v4/dist_schema_alignment_report.json")
+DEFAULT_REPORT = Path("outputs/readiness/bootstrap_candidate_dataset_solver/dist_schema_alignment_report.json")
 LEAKAGE_PATTERNS = (
     "label_source",
     "label_quality",

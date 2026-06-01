@@ -8,7 +8,7 @@ import pandas as pd
 from datasets.external_oracle_sources.common import NORMALIZED_COLUMNS
 from datasets.external_oracle_sources.hf_gtow_llama_sft_v3 import export_gtow_llama_sft_v3
 from datasets.external_oracle_sources.hf_poker_gto_100k import export_poker_gto_100k
-from datasets.external_oracle_sources.phh_acpc_scaffold import parse_phh_file, write_phh_scaffold
+from datasets.external_oracle_sources.phh_acpc_scaffold import export_phh_behavioral_dataset, parse_phh_file, write_phh_scaffold
 
 
 def poker_gto_records() -> list[dict[str, object]]:
@@ -150,3 +150,44 @@ def test_phh_acpc_scaffold_writes_report_and_empty_parser_schema(tmp_path: Path)
     assert (output_dir / "dataset_report.json").exists()
     assert (output_dir / "dataset_card.md").exists()
     assert list(df.columns) == list(NORMALIZED_COLUMNS)
+
+
+def test_phh_behavioral_export_parses_local_decision_snapshots(tmp_path: Path) -> None:
+    input_dir = tmp_path / "pluribus"
+    input_dir.mkdir()
+    (input_dir / "0.phh").write_text(
+        "\n".join(
+            [
+                "variant = 'NT'",
+                "ante_trimming_status = true",
+                "antes = [0, 0, 0, 0, 0, 0]",
+                "blinds_or_straddles = [50, 100, 0, 0, 0, 0]",
+                "min_bet = 100",
+                "starting_stacks = [10000, 10000, 10000, 10000, 10000, 10000]",
+                "actions = ['d dh p1 AhKh', 'd dh p2 ????', 'd dh p3 QcJc', 'd dh p4 2s2d', 'd dh p5 7h8h', 'd dh p6 Td9d', 'p3 f', 'p4 cbr 210', 'p5 f', 'p6 f', 'p1 cc', 'p2 f', 'd db 7d5h9d', 'p1 cc', 'p4 cc', 'd db Qh', 'p1 cbr 230', 'p4 f']",
+                "hand = 0",
+                "players = ['MrBlue', 'MrBlonde', 'MrWhite', 'MrPink', 'MrBrown', 'Pluribus']",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "export"
+
+    report = export_phh_behavioral_dataset(
+        source="phh_pluribus",
+        input_path=input_dir,
+        output_dir=output_dir,
+        force=True,
+    )
+
+    assert report["rows_loaded"] == 10
+    assert report["rows_usable"] == 10
+    assert report["behavioral_not_solver_oracle"] is True
+    assert report["source_dataset"] == "PHH Pluribus"
+    assert report["label_distribution_3intent"] == {"CALL": 1, "NO_INVEST": 7, "RAISE": 2}
+
+    model_df = pd.read_csv(output_dir / "model_input.csv")
+    assert set(model_df["label_3intent"]) == {"NO_INVEST", "CALL", "RAISE"}
+    assert "Ah Kh" in set(model_df["hero_cards"].dropna())
+    assert "????" in set(model_df["hero_cards"].dropna())
+    assert (output_dir / "model_features_20.csv").exists()

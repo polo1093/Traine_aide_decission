@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -8,7 +7,6 @@ import pytest
 
 from experiments.live_bb_baseline_v1 import (
     ALLOWED_LABELS,
-    HISTORICAL_V5_4000_MODEL,
     normalize_label,
     predict_live_bb_model,
     run_live_bb_baseline_v1,
@@ -98,14 +96,6 @@ def write_river_jsonl(path: Path) -> None:
     path.write_text("\n".join(json.dumps(payload, ensure_ascii=False) for payload in rows) + "\n", encoding="utf-8")
 
 
-def sha256(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    digest = hashlib.sha256()
-    digest.update(path.read_bytes())
-    return digest.hexdigest()
-
-
 def test_label_normalization_supports_call_and_raise_aliases() -> None:
     assert normalize_label("COL") == "CALL"
     assert normalize_label("RES") == "RAISE"
@@ -117,7 +107,6 @@ def test_live_bb_baseline_trains_four_classes_without_leakage_or_overwrite(tmp_p
     input_jsonl = tmp_path / "training_dataset.jsonl"
     output_dir = tmp_path / "live_bb_baseline_v1"
     write_jsonl(input_jsonl)
-    before = sha256(HISTORICAL_V5_4000_MODEL)
 
     report = run_live_bb_baseline_v1(input_jsonl=input_jsonl, output_dir=output_dir)
 
@@ -130,14 +119,11 @@ def test_live_bb_baseline_trains_four_classes_without_leakage_or_overwrite(tmp_p
     assert report["label_distribution"]["CALL"] == 10
     assert report["label_distribution"]["RAISE"] == 10
     assert report["split_strategy"] == "grouped_by_source_snapshot_id_stratified_by_label"
-    assert report["historical_v5_4000_overwritten"] is False
-    assert sha256(HISTORICAL_V5_4000_MODEL) == before
     assert report["bot_live_connection"] == "not_modified"
     assert (output_dir / "candidates.csv").exists()
     assert (output_dir / "model.joblib").exists()
     assert (output_dir / "training_report.json").exists()
     assert (output_dir / "feature_contract.json").exists()
-    assert (output_dir / "comparison_with_v5_4000.md").exists()
     assert (output_dir / "input_feature_correlation_matrix.svg").exists()
     assert (output_dir / "input_feature_correlation_matrix.json").exists()
     assert (output_dir / "high_correlation_pairs.md").exists()
@@ -162,7 +148,6 @@ def test_live_bb_baseline_can_generate_target_rows_without_touching_historical_m
     input_jsonl = tmp_path / "training_dataset.jsonl"
     output_dir = tmp_path / "live_bb_baseline_v1_80"
     write_jsonl(input_jsonl)
-    before = sha256(HISTORICAL_V5_4000_MODEL)
 
     report = run_live_bb_baseline_v1(input_jsonl=input_jsonl, output_dir=output_dir, target_rows=80)
 
@@ -172,8 +157,6 @@ def test_live_bb_baseline_can_generate_target_rows_without_touching_historical_m
     assert report["generation_mode"] == "imported_plus_resampling"
     assert report["augmentation"]["applied"] is True
     assert report["augmentation"]["requested_target_rows"] == 80
-    assert report["historical_v5_4000_overwritten"] is False
-    assert sha256(HISTORICAL_V5_4000_MODEL) == before
 
     lines = (output_dir / "candidates.csv").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 81

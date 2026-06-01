@@ -94,7 +94,7 @@ The script writes:
 Every report includes `training_quality = "pipeline_smoke_only"` and warnings
 that the dataset is small, untrusted, and unsuitable for production.
 
-For v2 datasets that include weak-rule rows, reports also include:
+For datasets that include weak-rule rows, reports also include:
 
 - `contains_weak_rule_labels = true`
 - `not_for_production = true`
@@ -102,7 +102,7 @@ For v2 datasets that include weak-rule rows, reports also include:
 
 The model may learn the weak rules directly. That is acceptable for the smoke
 test, but it is not evidence of strategic quality. If metrics look very strong
-on the current v3 dataset, interpret that as evidence that the pipeline can
+on the current dataset, interpret that as evidence that the pipeline can
 train and evaluate, not that the model plays well.
 
 ## Offline Prediction
@@ -111,7 +111,7 @@ Use:
 
 ```powershell
 python models/predict_bootstrap_model.py `
-  --model-dir outputs/bootstrap_model_v3 `
+  --model-dir outputs/bootstrap_model `
   --input-json "{\"pot\":100,\"to_call\":0,\"stack\":1000,\"spr\":10,\"dominant_action_frequency\":0.8,\"iterations\":25,\"street\":\"RIVER\",\"position_model\":\"OOP\",\"decision_context_type\":\"hero_check_or_bet\",\"label_source\":\"weak_rule_bootstrap\",\"label_quality\":\"bootstrap_weak_rule_untrusted\",\"candidate_confidence\":\"high\"}"
 ```
 

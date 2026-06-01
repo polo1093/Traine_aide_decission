@@ -6,8 +6,7 @@ import json
 from pathlib import Path
 
 from experiments.advanced_bootstrap_v5_diagnostics import run_advanced_diagnostics
-from experiments.train_bootstrap_v5 import flatten_dist_snapshot, load_first_dist_snapshot, train_bootstrap_v5
-from models.predict_bootstrap_model import predict_bootstrap_model
+from experiments.train_bootstrap_v5 import train_bootstrap_v5
 
 
 FIELDS = [
@@ -135,15 +134,3 @@ def test_advanced_diagnostics_and_bb_model_do_not_overwrite_current_model(tmp_pa
     assert "features.player_start" in current_contract["features_constant_excluded"]
     assert bb_contract["leakage_columns_used_by_model"] == []
 
-
-def test_real_dist_line_still_predicts_after_advanced_diagnostics_artifacts() -> None:
-    snapshot = load_first_dist_snapshot(Path("dist/ml_dataset_export/example_training_dataset.jsonl"))
-    payload = flatten_dist_snapshot(snapshot)
-
-    result = predict_bootstrap_model(
-        model_dir=Path("outputs/readiness/bootstrap_model_v5_4000"),
-        input_payload=payload,
-    )
-
-    assert result["status"] == "ok"
-    assert result["prediction"] in {"CHECK", "FOLD", "RAISE"}

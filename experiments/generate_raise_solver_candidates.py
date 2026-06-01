@@ -1,7 +1,7 @@
 """Generate curated solver-backed RAISE candidates for bootstrap audits.
 
 The output is still an inspection artifact, not GTO data and not production
-training data. It exists to reduce the v4 weak-rule dependency for RAISE before
+training data. It exists to reduce weak-rule dependency for RAISE before
 any CALL work is attempted.
 """
 
@@ -28,8 +28,8 @@ from solver_jobs.subprocess_runner import run_solver_job_subprocess
 
 LABEL_QUALITY = "solver_candidate_untrusted"
 ITERATIONS = (25, 100)
-DEFAULT_OUTPUT_DIR = "outputs/readiness/bootstrap_candidate_dataset_v4_raise"
-DEFAULT_BASE_V4_RESULTS = "outputs/readiness/bootstrap_candidate_dataset_v4/candidate_sensitivity_results.jsonl"
+DEFAULT_OUTPUT_DIR = "outputs/readiness/bootstrap_candidate_dataset_raise"
+DEFAULT_BASE_RESULTS = "outputs/readiness/bootstrap_candidate_dataset_solver/candidate_sensitivity_results.jsonl"
 
 
 CURATED_RAISE_GROUPS = (
@@ -57,7 +57,7 @@ CARDS = {
 def generate_raise_solver_candidates(
     *,
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
-    base_v4_results: str | Path = DEFAULT_BASE_V4_RESULTS,
+    base_results: str | Path = DEFAULT_BASE_RESULTS,
     timeout_s: float = 5.0,
     backend: str = "rust",
     min_dominant_frequency: float = 0.70,
@@ -81,7 +81,7 @@ def generate_raise_solver_candidates(
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
             handle.write("\n")
 
-    combine_jsonl([base_v4_results, raise_results], combined_results)
+    combine_jsonl([base_results, raise_results], combined_results)
     export_summary = export_candidate_dataset(
         [combined_results],
         output_jsonl=candidates_jsonl,
@@ -283,7 +283,7 @@ def _dedupe(values: list[str]) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--base-v4-results", default=DEFAULT_BASE_V4_RESULTS)
+    parser.add_argument("--base-results", default=DEFAULT_BASE_RESULTS)
     parser.add_argument("--timeout-s", type=float, default=5.0)
     parser.add_argument("--backend", choices=["rust", "python"], default="rust")
     parser.add_argument("--min-dominant-frequency", type=float, default=0.70)
@@ -296,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     report = generate_raise_solver_candidates(
         output_dir=args.output_dir,
-        base_v4_results=args.base_v4_results,
+        base_results=args.base_results,
         timeout_s=args.timeout_s,
         backend=args.backend,
         min_dominant_frequency=args.min_dominant_frequency,

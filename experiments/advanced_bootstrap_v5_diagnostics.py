@@ -45,9 +45,9 @@ from models.train_bootstrap_model import (
 
 
 DEFAULT_INPUT = Path("outputs/readiness/bootstrap_candidate_dataset_v5_4000/candidates.csv")
-DEFAULT_CURRENT_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5_4000")
+DEFAULT_CURRENT_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5")
 DEFAULT_BB_DATASET = Path("outputs/readiness/bootstrap_candidate_dataset_v5_4000_bb/candidates.csv")
-DEFAULT_BB_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5_4000_bb")
+DEFAULT_BB_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5_bb")
 EQUITY_DERIVED_FEATURES = {
     "features.equity_table",
     "features.equity_1v1",

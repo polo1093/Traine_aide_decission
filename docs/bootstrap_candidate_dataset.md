@@ -38,7 +38,7 @@ For model training, labels are normalized:
 - `BET_33`, `BET_50`, `BET_66`, `RAISE_33`, `RAISE_66` -> `RAISE`
 - `ALL_IN` -> excluded
 
-## Weak Rule Bootstrap V3
+## Weak Rule Bootstrap
 
 When `--include-weak-rules` is enabled, the exporter keeps the accepted solver
 candidates and adds synthetic weak-rule rows to make the pipeline exercise at
@@ -52,7 +52,7 @@ Weak-rule rows are clearly marked:
 
 These rows are not solver candidates and are not GTO labels.
 
-V3 also writes:
+The export also writes:
 
 - `dataset_report.json`
 - `dataset_report.md`
@@ -109,12 +109,12 @@ python datasets/export_candidate_dataset.py outputs/candidate_sensitivity/result
   --output-csv outputs/bootstrap_candidate_dataset/candidates.csv
 ```
 
-V3 weak-rule export:
+Weak-rule export:
 
 ```powershell
 python datasets/export_candidate_dataset.py outputs/candidate_sensitivity/results.jsonl `
-  --output-jsonl outputs/bootstrap_candidate_dataset_v3/candidates.jsonl `
-  --output-csv outputs/bootstrap_candidate_dataset_v3/candidates.csv `
+  --output-jsonl outputs/bootstrap_candidate_dataset/candidates.jsonl `
+  --output-csv outputs/bootstrap_candidate_dataset/candidates.csv `
   --include-weak-rules `
   --min-usable-rows 100 `
   --class-floor 10

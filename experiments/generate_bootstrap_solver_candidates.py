@@ -1,4 +1,4 @@
-"""Generate a guarded bootstrap v4 dataset from hero-oriented solver spots.
+﻿"""Generate a guarded bootstrap solver dataset from hero-oriented solver spots.
 
 This script keeps the workflow offline and bootstrap-only. It never writes
 ``training_label`` or ``gto_label`` and it does not connect anything to the live
@@ -59,7 +59,7 @@ AMOUNT_TEMPLATES = (
 )
 
 
-def build_v4_plan(*, target_solves: int, seed: int) -> list[dict[str, Any]]:
+def build_solver_candidate_plan(*, target_solves: int, seed: int) -> list[dict[str, Any]]:
     """Return an exact-size plan using only hero-oriented contexts."""
 
     if target_solves <= 0:
@@ -72,7 +72,7 @@ def build_v4_plan(*, target_solves: int, seed: int) -> list[dict[str, Any]]:
     for group_index in range(group_count):
         context = CONTEXTS[group_index % len(CONTEXTS)]
         template = AMOUNT_TEMPLATES[group_index % len(AMOUNT_TEMPLATES)]
-        scenario = f"v4_{template['name']}_{group_index:04d}"
+        scenario = f"solver_{template['name']}_{group_index:04d}"
         for iterations in ITERATIONS_PER_GROUP:
             to_call = 0.0 if context == "hero_oop_check_or_bet" else round(float(template["pot"]) * float(template["to_call_ratio"]), 6)
             plan.append(
@@ -92,7 +92,7 @@ def build_v4_plan(*, target_solves: int, seed: int) -> list[dict[str, Any]]:
     return plan
 
 
-def run_bootstrap_v4(
+def run_bootstrap_solver_candidates(
     *,
     output_dir: str | Path,
     max_stage: str = "large",
@@ -103,7 +103,7 @@ def run_bootstrap_v4(
     min_usable_rows: int = 500,
     class_floor: int = 50,
 ) -> dict[str, Any]:
-    """Run staged solves and export the largest successful v4 dataset."""
+    """Run staged solves and export the largest successful solver dataset."""
 
     if max_stage not in STAGES:
         raise ValueError(f"unsupported_stage:{max_stage}")
@@ -111,9 +111,9 @@ def run_bootstrap_v4(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     final_target = STAGES[max_stage]
-    plan = build_v4_plan(target_solves=final_target, seed=seed)
+    plan = build_solver_candidate_plan(target_solves=final_target, seed=seed)
     sensitivity_path = output_path / "candidate_sensitivity_results.jsonl"
-    report_path = output_path / "dataset_report_v4.json"
+    report_path = output_path / "dataset_report_solver.json"
     candidates_jsonl = output_path / "candidates.jsonl"
     candidates_csv = output_path / "candidates.csv"
 
@@ -124,7 +124,7 @@ def run_bootstrap_v4(
 
     with sensitivity_path.open("w", encoding="utf-8", newline="\n") as handle:
         for index, row in enumerate(plan, start=1):
-            record = run_one_v4_row(row, timeout_s=timeout_s, backend=backend)
+            record = run_one_solver_candidate_row(row, timeout_s=timeout_s, backend=backend)
             records.append(record)
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
             handle.write("\n")
@@ -143,7 +143,7 @@ def run_bootstrap_v4(
                     min_dominant_frequency=min_dominant_frequency,
                     balance_weak_rules=True,
                 )
-                stage_summary = build_v4_report(
+                stage_summary = build_solver_candidate_report(
                     records,
                     export_summary,
                     stage_name=stage_name,
@@ -165,8 +165,8 @@ def run_bootstrap_v4(
     return final_summary
 
 
-def run_one_v4_row(row: dict[str, Any], *, timeout_s: float, backend: str) -> dict[str, Any]:
-    job = build_v4_job(row, timeout_s=timeout_s, backend=backend)
+def run_one_solver_candidate_row(row: dict[str, Any], *, timeout_s: float, backend: str) -> dict[str, Any]:
+    job = build_solver_candidate_job(row, timeout_s=timeout_s, backend=backend)
     root_validation = validate_hero_root_alignment(job)
     subprocess_result = run_solver_job_subprocess(job, timeout_s=timeout_s)
     solver_result = subprocess_result.get("solver_result") if isinstance(subprocess_result.get("solver_result"), dict) else {}
@@ -231,12 +231,12 @@ def run_one_v4_row(row: dict[str, Any], *, timeout_s: float, backend: str) -> di
     }
 
 
-def build_v4_job(row: dict[str, Any], *, timeout_s: float, backend: str) -> dict[str, Any]:
+def build_solver_candidate_job(row: dict[str, Any], *, timeout_s: float, backend: str) -> dict[str, Any]:
     cards = _cards_for(row)
     hero_position_model, decision_context_type = _context_fields(row["context"])
     built = build_hero_oriented_solver_job(
         solver_job_id=_job_id(row),
-        source_snapshot_id=f"v4_snapshot_{_job_id(row)}",
+        source_snapshot_id=f"solver_snapshot_{_job_id(row)}",
         created_at="2026-05-26T00:00:00+00:00",
         source_type="synthetic",
         units="bb",
@@ -256,16 +256,16 @@ def build_v4_job(row: dict[str, Any], *, timeout_s: float, backend: str) -> dict
         root_must_be_hero=True,
     )
     if built["status"] != "ok":
-        raise ValueError(f"v4_job_build_failed:{built['error']}")
+        raise ValueError(f"solver_candidate_job_build_failed:{built['error']}")
     job = dict(built["job"])
     job["generation_profile"] = row["context"]
     job["generation_seed"] = row["seed"]
     job["generation_index"] = row["group_index"]
-    job["v4_scenario"] = row["scenario"]
+    job["solver_scenario"] = row["scenario"]
     return job
 
 
-def build_v4_report(
+def build_solver_candidate_report(
     records: list[dict[str, Any]],
     export_summary: dict[str, Any],
     *,
@@ -307,7 +307,7 @@ def build_v4_report(
             "candidate_sensitivity_results": str(output_dir / "candidate_sensitivity_results.jsonl"),
             "candidates_csv": str(output_dir / "candidates.csv"),
             "candidates_jsonl": str(output_dir / "candidates.jsonl"),
-            "dataset_report_v4": str(output_dir / "dataset_report_v4.json"),
+            "dataset_report_solver": str(output_dir / "dataset_report_solver.json"),
         },
     }
 
@@ -377,7 +377,7 @@ def _context_fields(context: str) -> tuple[str, str]:
 
 
 def _job_id(row: dict[str, Any]) -> str:
-    return f"v4_{row['context']}_{row['scenario']}_it{row['iterations']}"
+    return f"solver_{row['context']}_{row['scenario']}_it{row['iterations']}"
 
 
 def _stage_name(solve_count: int) -> str:
@@ -397,7 +397,7 @@ def _dedupe(values: list[str]) -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", default="outputs/readiness/bootstrap_candidate_dataset_v4")
+    parser.add_argument("--output-dir", default="outputs/readiness/bootstrap_candidate_dataset_solver")
     parser.add_argument("--max-stage", choices=STAGE_ORDER, default="large")
     parser.add_argument("--seed", type=int, default=9400)
     parser.add_argument("--timeout-s", type=float, default=5.0)
@@ -410,7 +410,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    summary = run_bootstrap_v4(
+    summary = run_bootstrap_solver_candidates(
         output_dir=args.output_dir,
         max_stage=args.max_stage,
         seed=args.seed,

@@ -1,4 +1,4 @@
-"""Generate, train, and compare the offline dist-aligned bootstrap v5_4000 run."""
+﻿"""Generate, train, and compare the offline dist-aligned bootstrap v5_4000 run."""
 
 from __future__ import annotations
 
@@ -15,13 +15,13 @@ if str(ROOT) not in sys.path:
 
 from datasets.export_candidate_dataset import export_candidate_dataset
 from experiments.dist_schema_alignment import DEFAULT_DIST_DIR, flatten_schema_paths, infer_json_schema, load_dist_references
-from experiments.generate_bootstrap_v4 import build_v4_plan, build_v4_report, run_one_v4_row, write_records
+from experiments.generate_bootstrap_solver_candidates import build_solver_candidate_plan, build_solver_candidate_report, run_one_solver_candidate_row, write_records
 from experiments.train_bootstrap_v5 import dist_sample_prediction_report, train_bootstrap_v5
 from datasets.export_candidate_dataset import export_dist_aligned_candidate_csv
 
 
 DEFAULT_OUTPUT_DIR = Path("outputs/readiness/bootstrap_candidate_dataset_v5_4000")
-DEFAULT_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5_4000")
+DEFAULT_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5_large")
 DEFAULT_BASELINE_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5")
 DEFAULT_DIST_SAMPLE = Path("dist/ml_dataset_export/example_training_dataset.jsonl")
 
@@ -58,8 +58,8 @@ def run_bootstrap_v5_4000(
     started = time.perf_counter()
     records = []
     with sensitivity_path.open("w", encoding="utf-8", newline="\n") as handle:
-        for row in build_v4_plan(target_solves=target_solves, seed=seed):
-            record = normalize_v5_record(run_one_v4_row(row, timeout_s=timeout_s, backend=backend))
+        for row in build_solver_candidate_plan(target_solves=target_solves, seed=seed):
+            record = normalize_v5_record(run_one_solver_candidate_row(row, timeout_s=timeout_s, backend=backend))
             records.append(record)
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
             handle.write("\n")
@@ -75,7 +75,7 @@ def run_bootstrap_v5_4000(
         min_dominant_frequency=min_dominant_frequency,
         balance_weak_rules=True,
     )
-    raw_report = build_v4_report(
+    raw_report = build_solver_candidate_report(
         records,
         raw_export_summary,
         stage_name="v5_4000",
@@ -93,7 +93,7 @@ def run_bootstrap_v5_4000(
     report_outputs = {
         key: value
         for key, value in raw_report["outputs"].items()
-        if key != "dataset_report_v4"
+        if key != "dataset_report_solver"
     }
     dataset_report = {
         **raw_report,
@@ -162,7 +162,7 @@ def normalize_v5_record(record: dict[str, Any]) -> dict[str, Any]:
     for key in ("scenario", "solver_job_id"):
         value = normalized.get(key)
         if isinstance(value, str):
-            normalized[key] = value.replace("v4_", "v5_4000_")
+            normalized[key] = value.replace("solver_", "v5_4000_")
     return normalized
 
 

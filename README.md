@@ -1,6 +1,29 @@
 ````md
 # Traine_aide_decission
 
+# 1. OBJECTIF STRATÉGIQUE (INTEMPOREL)
+
+## 1.1 Finalité du projet
+
+Construire une architecture propre permettant :
+
+- Entraînement d’un modèle **pré-flop**
+- Entraînement d’un modèle **post-flop**
+- Utilisation de datasets issus de solutions connues (GTO / bases révélées)
+- Pipeline reproductible
+- Notebook uniquement pour :
+  - tests
+  - visualisations
+  - études graphiques
+  - comparaison outputs / ground truth
+
+Le projet doit aboutir à **une seule version stable**, sans branches mortes ni anciens essais conservés.
+
+---
+
+
+
+
 ## Direction ML actuelle
 
 La direction ML active est de partir de PokerBench comme source principale de labels oracle/solver, puis d'entrainer et comparer des modeles offline avant toute integration live.

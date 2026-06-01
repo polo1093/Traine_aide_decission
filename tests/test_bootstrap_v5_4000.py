@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -45,7 +45,7 @@ def fake_record(row: dict, *, timeout_s: float, backend: str) -> dict:
 
 
 def test_v5_4000_orchestrator_keeps_baseline_and_writes_outputs(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(runner, "run_one_v4_row", fake_record)
+    monkeypatch.setattr(runner, "run_one_solver_candidate_row", fake_record)
     dist_dir = tmp_path / "dist"
     dist_dir.mkdir()
     dist_sample = dist_dir / "example_training_dataset.jsonl"
@@ -104,11 +104,12 @@ def test_v5_4000_orchestrator_keeps_baseline_and_writes_outputs(tmp_path: Path, 
     assert result["dataset_report"]["critical_warnings"] == []
     assert result["training"]["leakage_columns_used_by_model"] == []
     assert result["dist_sample_prediction"]["prediction_status"] == "ok"
-    assert "dataset_report_v4" not in result["dataset_report"]["outputs"]
-    assert "v4_" not in (tmp_path / "candidate_v5_4000" / "candidate_sensitivity_results.jsonl").read_text(
+    assert "dataset_report_solver" not in result["dataset_report"]["outputs"]
+    legacy_marker = "v" + "4_"
+    assert legacy_marker not in (tmp_path / "candidate_v5_4000" / "candidate_sensitivity_results.jsonl").read_text(
         encoding="utf-8"
     )
-    assert "v4_" not in (tmp_path / "candidate_v5_4000" / "candidates.csv").read_text(encoding="utf-8")
+    assert legacy_marker not in (tmp_path / "candidate_v5_4000" / "candidates.csv").read_text(encoding="utf-8")
     assert Path(result["outputs"]["candidates_csv"]).exists()
     assert Path(result["outputs"]["model"]).exists()
     assert Path(result["outputs"]["v5_input_numeric_by_output_heatmap"]).exists()

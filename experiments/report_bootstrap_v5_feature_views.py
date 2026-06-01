@@ -35,7 +35,7 @@ from models.train_bootstrap_model import FEATURE_COLUMNS, NUMERIC_FEATURES, feat
 
 
 DEFAULT_INPUT = Path("outputs/readiness/bootstrap_candidate_dataset_v5_4000/candidates.csv")
-DEFAULT_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5_4000")
+DEFAULT_MODEL_DIR = Path("outputs/readiness/bootstrap_model_v5")
 
 
 def write_feature_view_reports(
